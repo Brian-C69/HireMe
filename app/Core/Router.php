@@ -26,6 +26,9 @@ final class Router
 
     private function compile(string $path): string
     {
+        if ($path === '/') {
+            return '#^/$#';
+        }
         $regex = preg_replace('#\{([a-zA-Z_][a-zA-Z0-9_]*)\}#', '(?P<$1>[^/]+)', $path);
         return '#^' . rtrim($regex, '/') . '$#';
     }
