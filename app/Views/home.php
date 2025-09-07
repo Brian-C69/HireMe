@@ -5,9 +5,9 @@
                 <h1 class="display-4 fw-bold lh-1 mb-3">Hiring in Malaysia, <span class="text-primary">simplified</span>.</h1>
                 <p class="lead text-muted">Malaysia’s recruitment platform — fast, transparent, and app-free.</p>
                 <div class="d-flex flex-wrap gap-2 mt-3">
-                    <a class="btn btn-primary btn-lg" href="/register?role=candidate"><i class="bi bi-person-plus me-1"></i> I’m a Job Seeker</a>
-                    <a class="btn btn-outline-primary btn-lg" href="/register?role=employer"><i class="bi bi-building me-1"></i> I’m an Employer</a>
-                    <a class="btn btn-outline-primary btn-lg" href="/register?role=recruiter"><i class="bi bi-people me-1"></i> I’m a Recruiter</a>
+                    <a class="btn btn-primary btn-lg" href="<?= BASE_URL ?>/register?role=candidate"><i class="bi bi-person-plus me-1"></i> I’m a Job Seeker</a>
+                    <a class="btn btn-outline-primary btn-lg" href="<?= BASE_URL ?>/register?role=employer"><i class="bi bi-building me-1"></i> I’m an Employer</a>
+                    <a class="btn btn-outline-primary btn-lg" href="<?= BASE_URL ?>/register?role=recruiter"><i class="bi bi-people me-1"></i> I’m a Recruiter</a>
                 </div>
                 <div class="mt-4 small text-muted">
                     <i class="bi bi-patch-check-fill text-warning me-1"></i> Verified profiles & RM50 premium badge to boost visibility.

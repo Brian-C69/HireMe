@@ -7,6 +7,9 @@ error_reporting(E_ALL);
 date_default_timezone_set('Asia/Kuala_Lumpur');
 session_start(); // session only here
 
+// Compute BASE_URL for subfolder installs (e.g. /HireMe/public)
+define('BASE_URL', rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/') ?: '');
+
 // PSR-4 autoloader for App\
 spl_autoload_register(function (string $class): void {
     $prefix  = 'App\\';
@@ -20,17 +23,44 @@ spl_autoload_register(function (string $class): void {
 
 use App\Core\Router;
 use App\Controllers\HomeController;
+use App\Controllers\AuthController;
+use App\Controllers\DashboardController;
 
 $router = new Router();
-$router->get('/', [HomeController::class, 'index']);
-$router->get('/index.php', [HomeController::class, 'index']); // allow direct file hit
 
-// Normalize path for XAMPP subfolder like /HireMe/public
+// Home — support both "/" and "/index.php"
+$router->get('/', [HomeController::class, 'index']);
+$router->get('/index.php', [HomeController::class, 'index']);
+
+// Auth
+$router->get('/login', [AuthController::class, 'showLogin']);
+$router->post('/login', [AuthController::class, 'doLogin']);
+$router->get('/logout', [AuthController::class, 'logout']);
+
+$router->get('/register', [\App\Controllers\AuthController::class, 'showRegister']);
+$router->post('/register', [\App\Controllers\AuthController::class, 'doRegister']);
+
+// Forgot / Reset
+$router->get('/forgot', [AuthController::class, 'showForgot']);
+$router->post('/forgot', [AuthController::class, 'sendReset']);
+$router->get('/reset', [AuthController::class, 'showReset']);
+$router->post('/reset', [AuthController::class, 'processReset']);
+
+$router->get('/welcome', [DashboardController::class, 'welcome']);
+
+// Normalize path relative to BASE_URL
 $method    = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 $uriPath   = str_replace('\\', '/', parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/');
-$scriptDir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/'); // e.g. /HireMe/public
-$path      = ($scriptDir && strpos($uriPath, $scriptDir) === 0) ? substr($uriPath, strlen($scriptDir)) : $uriPath;
+$path      = (BASE_URL && str_starts_with($uriPath, BASE_URL)) ? substr($uriPath, strlen(BASE_URL)) : $uriPath;
 if ($path === '' || $path === false) $path = '/';
 if ($path === '/index.php') $path = '/';
 
 $router->dispatch($method, $path);
+
+// Polyfill for PHP < 8.0 (remove if not needed)
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool
+    {
+        return $needle !== '' && strpos($haystack, $needle) === 0 || ($needle === '' && true);
+    }
+}
