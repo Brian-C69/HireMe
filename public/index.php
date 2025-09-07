@@ -22,17 +22,15 @@ use App\Core\Router;
 use App\Controllers\HomeController;
 
 $router = new Router();
+$router->get('/', [HomeController::class, 'index']);       // home
+$router->get('/index.php', [HomeController::class, 'index']); // allow direct hits
 
-// Home — support both "/" and "/index.php" (why: users may hit the file directly)
-$router->get('/', [HomeController::class, 'index']);
-$router->get('/index.php', [HomeController::class, 'index']);
-
-// Resolve request path and normalize
-$method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-$path   = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/';
-// Treat any URL ending with "/index.php" as "/"
-if (preg_match('#/index\\.php$#', $path)) {
-    $path = '/';
-}
+// Resolve & normalize path relative to /HireMe/public
+$method    = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+$uriPath   = str_replace('\\', '/', parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/');
+$scriptDir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/'); // e.g. /HireMe/public
+$path      = ($scriptDir && strpos($uriPath, $scriptDir) === 0) ? substr($uriPath, strlen($scriptDir)) : $uriPath;
+if ($path === '' || $path === false) $path = '/';
+if ($path === '/index.php') $path = '/';
 
 $router->dispatch($method, $path);
