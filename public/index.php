@@ -22,8 +22,17 @@ use App\Core\Router;
 use App\Controllers\HomeController;
 
 $router = new Router();
-$router->get('/', [HomeController::class, 'index']);
 
+// Home — support both "/" and "/index.php" (why: users may hit the file directly)
+$router->get('/', [HomeController::class, 'index']);
+$router->get('/index.php', [HomeController::class, 'index']);
+
+// Resolve request path and normalize
 $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 $path   = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/';
+// Treat any URL ending with "/index.php" as "/"
+if (preg_match('#/index\\.php$#', $path)) {
+    $path = '/';
+}
+
 $router->dispatch($method, $path);

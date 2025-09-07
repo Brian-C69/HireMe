@@ -110,7 +110,7 @@ final class HomeController
                                 ['bi-buildings', 'Employer-Centric Posting', 'Post multiple roles under one company.'],
                                 ['bi-briefcase', 'Recruiter Multi-Company', 'Post for multiple companies from one dashboard.'],
                                 ['bi-shield-check', 'KYC & Premium Badge', 'Secure verification + golden badge (RM50).'],
-                                ['bi-unlock', 'Resume Unlock Credits', 'Unlock high-potential candidates beyond applicants.'],
+                                ['bi-unlock', 'Resume Unlock Credits', 'Unlock candidates beyond direct applicants.'],
                                 ['bi-phone', 'Cross-Platform', 'Fast, responsive — no apps required.'],
                             ];
                             foreach ($features as $f): ?>
@@ -151,7 +151,7 @@ final class HomeController
                                     <h5 class="mb-3"><i class="bi bi-briefcase me-2 text-info"></i>Employer & Recruiter Flow</h5>
                                     <ol class="mb-0">
                                         <li>Create account</li>
-                                        <li>Post jobs (single company / multi-company)</li>
+                                        <li>Post jobs (single / multi-company)</li>
                                         <li>Review applicants & bookmarks</li>
                                         <li>Unlock additional resumes with credits</li>
                                         <li>Set micro-interview questions (recruiters)</li>
