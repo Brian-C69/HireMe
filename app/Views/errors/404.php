@@ -26,7 +26,7 @@
         <h1 class="display-5 fw-semibold mb-2">Page not found</h1>
         <p class="text-muted mb-4">The page you’re looking for doesn’t exist or has been moved.</p>
         <div class="d-flex gap-2">
-            <a class="btn btn-primary" href="<?= htmlspecialchars(($baseUrl ?: '') . '/index.php') ?>">
+            <a class="btn btn-primary" href="<?= htmlspecialchars(($baseUrl ?? '') . '/index.php') ?>">
                 <i class="bi bi-house-door me-1"></i> Back to Home
             </a>
             <a class="btn btn-outline-primary" href="javascript:history.back()"><i class="bi bi-arrow-left me-1"></i> Go Back</a>

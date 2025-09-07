@@ -26,13 +26,19 @@ final class Router
 
     private function compile(string $path): string
     {
+        // FIX: root route must compile to "/"
+        if ($path === '/' || $path === '') {
+            return '#^/$#';
+        }
+        // Replace {param} with named group, allow optional trailing slash
         $regex = preg_replace('#\{([a-zA-Z_][a-zA-Z0-9_]*)\}#', '(?P<$1>[^/]+)', $path);
-        return '#^' . rtrim($regex, '/') . '$#';
+        $regex = rtrim($regex, '/');           // avoid trimming root into empty
+        return '#^' . $regex . '/?$#';         // accept optional trailing slash
     }
 
     public function dispatch(string $method, string $path): void
     {
-        $path = rtrim($path, '/') ?: '/';
+        $path = rtrim($path, '/') ?: '/';      // keep "/" intact
         foreach ($this->routes[$method] ?? [] as $r) {
             if (preg_match($r['pattern'], $path, $m)) {
                 $params = array_filter($m, 'is_string', ARRAY_FILTER_USE_KEY);
@@ -41,13 +47,14 @@ final class Router
             }
         }
 
-        // Pretty 404; pass $baseUrl for XAMPP subfolder home link
+        // Pretty 404; pass baseUrl so XAMPP users can link back correctly
         http_response_code(404);
-        $root    = dirname(__DIR__, 2);
-        $view404 = $root . '/app/Views/errors/404.php';
+        $root     = dirname(__DIR__, 2);
+        $view404  = $root . '/app/Views/errors/404.php';
+        $scriptDir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/'); // e.g. /HireMe/public
+        $baseUrl  = $scriptDir ?: ''; // available in view
+
         if (is_file($view404)) {
-            $scriptDir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/'); // e.g. /HireMe/public
-            $baseUrl   = $scriptDir ?: '';
             require $view404;
             return;
         }
