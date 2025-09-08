@@ -67,19 +67,19 @@ $router->get('/resume/pdf', [ResumeController::class, 'exportPdf']);
 $router->get('/jobs',          [JobController::class, 'index']);
 $router->get('/jobs/create',   [JobController::class, 'create']);  // Employer only
 $router->post('/jobs',         [JobController::class, 'store']);   // Employer only
-$router->get('/jobs/{id}',     [JobController::class, 'show']);
+$router->get('/jobs/mine',     [JobController::class, 'mine']);    // owner list
+$router->get('/jobs/{id:\d+}',     [JobController::class, 'show']);
 
 $router->get('/company', [EmployerController::class, 'edit']);    // Employer profile
 $router->post('/company', [EmployerController::class, 'update']);
 
-$router->get('/jobs/{id}/apply', [ApplicationController::class, 'create']);   // pretty URL
+$router->get('/jobs/{id:\d+}/apply', [ApplicationController::class, 'create']);   // pretty URL
 $router->get('/applications/create', [ApplicationController::class, 'create']); // legacy with ?job=
 $router->post('/applications', [ApplicationController::class, 'store']);
 
 
-$router->get('/jobs/mine',              [JobController::class, 'mine']);          // owner list
-$router->post('/jobs/{id}/status',      [JobController::class, 'updateStatus']);  // change status
-$router->post('/jobs/{id}/delete',      [JobController::class, 'destroy']);       // soft delete
+$router->post('/jobs/{id:\d+}/status',      [JobController::class, 'updateStatus']);  // change status
+$router->post('/jobs/{id:\d+}/delete',      [JobController::class, 'destroy']);       // soft delete
 
 // Normalize path relative to BASE_URL
 $method    = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
