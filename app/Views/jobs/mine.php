@@ -62,6 +62,7 @@ $badge = function (string $s): string {
                                 <td><span class="<?= $badge($status) ?>"><?= htmlspecialchars($status) ?></span></td>
                                 <td class="text-end">
                                     <a class="btn btn-sm btn-outline-primary" href="<?= $base ?>/jobs/<?= $id ?>">View</a>
+                                    <a class="btn btn-sm btn-outline-success" href="<?= $base ?>/jobs/<?= $id ?>/edit">Edit</a>
                                     <form action="<?= $base ?>/jobs/<?= $id ?>/status" method="post" class="d-inline">
                                         <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
                                         <select name="status" class="form-select form-select-sm d-inline w-auto me-1">

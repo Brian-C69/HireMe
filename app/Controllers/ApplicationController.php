@@ -96,67 +96,69 @@ final class ApplicationController
     /** POST /applications */
     public function store(array $params = []): void
     {
-        Auth::requireRole('Candidate');
+        \App\Core\Auth::requireRole('Candidate');
         if (!$this->csrfOk()) {
             $this->flash('danger', 'Invalid session.');
             $this->redirect('/jobs');
         }
 
         $jobId = (int)($_POST['job_id'] ?? 0);
-        $pdo = DB::conn();
+        $pdo   = DB::conn();
+        $cid   = (int)($_SESSION['user']['id'] ?? 0);
 
-        // load 3 questions for validation
+        // Duplicate check (block repeat)
+        $du = $pdo->prepare("SELECT applicant_id, application_status, application_date
+                         FROM applications WHERE candidate_id=:cid AND job_posting_id=:jid LIMIT 1");
+        $du->execute([':cid' => $cid, ':jid' => $jobId]);
+        if ($du->fetch()) {
+            $this->flash('info', 'You have already applied to this job.');
+            $this->redirect('/jobs/' . $jobId);
+        }
+
+        // Load 3 questions
         $qrows = $pdo->prepare("
-    SELECT mq.id, mq.prompt
-    FROM job_micro_questions jmq
-    JOIN micro_questions mq ON mq.id = jmq.question_id
-    WHERE jmq.job_posting_id = :id
-    ORDER BY mq.id ASC
+      SELECT mq.id, mq.prompt
+      FROM job_micro_questions jmq
+      JOIN micro_questions mq ON mq.id = jmq.question_id
+      WHERE jmq.job_posting_id = :id
+      ORDER BY mq.id ASC
     ");
         $qrows->execute([':id' => $jobId]);
         $qrows = $qrows->fetchAll() ?: [];
 
+        // Validate answers
         $answers = [];
-        foreach ($qrows as $i => $q) {
+        foreach ($qrows as $q) {
             $key = 'answer_' . $q['id'];
             $txt = trim((string)($_POST[$key] ?? ''));
             $answers[] = ['qid' => (int)$q['id'], 'text' => $txt];
         }
-
         $errors = [];
         foreach ($answers as $a) {
             if ($a['text'] === '') $errors['answer_' . $a['qid']] = 'Please provide an answer.';
             elseif (mb_strlen($a['text']) > 1000) $errors['answer_' . $a['qid']] = 'Max 1000 characters.';
         }
         if ($errors) {
-            $this->setErrors($errors);
-            $this->setOld($_POST);
-            $this->redirect('/applications/create?job=' . $jobId);
+            $_SESSION['errors'] = $errors;
+            $_SESSION['old'] = $_POST;
+            $_SESSION['open_apply_modal'] = true;
+            $this->flash('danger', 'Please correct the errors below.');
+            $this->redirect('/jobs/' . $jobId);
         }
 
-        // create application + answers
+        // Create application + answers
         $pdo->beginTransaction();
         try {
             $now = date('Y-m-d H:i:s');
-            $cid = (int)($_SESSION['user']['id'] ?? 0);
-
-            // prevent duplicate application
-            $du = $pdo->prepare("SELECT applicant_id FROM applications WHERE candidate_id=:cid AND job_posting_id=:jid LIMIT 1");
-            $du->execute([':cid' => $cid, ':jid' => $jobId]);
-            if ($du->fetch()) {
-                $pdo->rollBack();
-                $this->flash('warning', 'You already applied for this job.');
-                $this->redirect('/jobs/' . $jobId);
-            }
 
             $ins = $pdo->prepare("INSERT INTO applications
-    (candidate_id, job_posting_id, application_date, application_status, resume_url, cover_letter, notes, updated_at)
-    VALUES (:cid, :jid, :ad, 'Applied', NULL, NULL, NULL, :ua)");
+          (candidate_id, job_posting_id, application_date, application_status, resume_url, cover_letter, notes, updated_at)
+          VALUES (:cid, :jid, :ad, 'Applied', NULL, NULL, NULL, :ua)");
             $ins->execute([':cid' => $cid, ':jid' => $jobId, ':ad' => $now, ':ua' => $now]);
 
             $appId = (int)$pdo->lastInsertId();
             $ans = $pdo->prepare("INSERT INTO application_answers (application_id, question_id, answer_text, created_at)
-    VALUES (:aid,:qid,:txt,:ts)");
+                              VALUES (:aid,:qid,:txt,:ts)");
             foreach ($answers as $a) {
                 $ans->execute([':aid' => $appId, ':qid' => $a['qid'], ':txt' => $a['text'], ':ts' => $now]);
             }
@@ -165,7 +167,7 @@ final class ApplicationController
         } catch (\Throwable $e) {
             $pdo->rollBack();
             $this->flash('danger', 'Could not submit application.');
-            $this->redirect('/applications/create?job=' . $jobId);
+            $this->redirect('/jobs/' . $jobId);
         }
 
         $this->flash('success', 'Application submitted.');
