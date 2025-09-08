@@ -53,8 +53,6 @@ $router->post('/reset', [AuthController::class, 'processReset']);
 
 $router->get('/welcome', [DashboardController::class, 'welcome']);
 
-$router->get('/jobs/create', [JobController::class, 'create']);
-
 // Candidate profile (resume)
 $router->get('/account', [CandidateController::class, 'edit']);
 $router->post('/account', [CandidateController::class, 'update']);
