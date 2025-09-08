@@ -66,6 +66,7 @@ if ($flash) unset($_SESSION['flash']); // show-once
                         <?php elseif ($role === 'Candidate'): ?>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/account">Profile</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/resume">Resume</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/applications">My Applications</a></li>
                         <?php endif; ?>
                     <?php else: ?>
                         <!-- Landing anchors for guests -->

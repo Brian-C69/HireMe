@@ -61,6 +61,8 @@ $router->get('/resume', [ResumeController::class, 'edit']);
 $router->post('/resume', [ResumeController::class, 'update']);
 $router->get('/resume/pdf', [ResumeController::class, 'exportPdf']);
 
+$router->get('/applications', [\App\Controllers\ApplicationController::class, 'index']); // Candidate “My Applications”
+
 // Jobs (order matters: static before dynamic!)
 $router->get('/jobs',        [JobController::class, 'index']);
 $router->get('/jobs/create', [JobController::class, 'create']);  // Employer only

@@ -173,4 +173,75 @@ final class ApplicationController
         $this->flash('success', 'Application submitted.');
         $this->redirect('/jobs/' . $jobId);
     }
+
+    /** GET /applications — Candidate’s applications with filters + pagination */
+    public function index(array $params = []): void
+    {
+        Auth::requireRole('Candidate');
+
+        $pdo = DB::conn();
+        $cid = (int)($_SESSION['user']['id'] ?? 0);
+
+        // Filters
+        $status  = trim((string)($_GET['status'] ?? ''));
+        $q       = trim((string)($_GET['q'] ?? ''));
+        $perPage = max(1, min(50, (int)($_GET['per'] ?? 10)));
+        $page    = max(1, (int)($_GET['page'] ?? 1));
+        $offset  = ($page - 1) * $perPage;
+
+        $where = ['a.candidate_id = :cid'];
+        $bind  = [':cid' => $cid];
+
+        if ($status !== '') {
+            $where[] = 'a.application_status = :st';
+            $bind[':st'] = $status;
+        }
+        if ($q !== '') {
+            $where[] = '(jp.job_title LIKE :q OR e.company_name LIKE :q)';
+            $bind[':q'] = "%$q%";
+        }
+
+        $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        // Count
+        $sqlCount = "
+          SELECT COUNT(*) FROM applications a
+          JOIN job_postings jp ON jp.job_posting_id = a.job_posting_id
+          JOIN employers e     ON e.employer_id     = jp.company_id
+          $whereSql
+        ";
+        $st = $pdo->prepare($sqlCount);
+        $st->execute($bind);
+        $total = (int)$st->fetchColumn();
+
+        // Page data
+        $sql = "
+          SELECT a.applicant_id, a.application_status, a.application_date,
+                 jp.job_posting_id, jp.job_title, jp.job_location, jp.employment_type,
+                 e.company_name, e.company_logo
+          FROM applications a
+          JOIN job_postings jp ON jp.job_posting_id = a.job_posting_id
+          JOIN employers e     ON e.employer_id     = jp.company_id
+          $whereSql
+          ORDER BY a.application_date DESC, a.applicant_id DESC
+          LIMIT :lim OFFSET :off
+        ";
+        $st = $pdo->prepare($sql);
+        foreach ($bind as $k => $v) {
+            $st->bindValue($k, $v);
+        }
+        $st->bindValue(':lim', $perPage, PDO::PARAM_INT);
+        $st->bindValue(':off', $offset,  PDO::PARAM_INT);
+        $st->execute();
+        $applications = $st->fetchAll() ?: [];
+
+        $pages = max(1, (int)ceil($total / $perPage));
+        if ($page > $pages) $page = $pages;
+
+        $root    = dirname(__DIR__, 2);
+        $title   = 'My Applications — HireMe';
+        $viewFile = $root . '/app/Views/applications/index.php';
+        $filters = ['status' => $status, 'q' => $q, 'per' => $perPage, 'page' => $page, 'total' => $total];
+        require $root . '/app/Views/layout.php';
+    }
 }

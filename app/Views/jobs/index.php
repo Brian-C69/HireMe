@@ -7,6 +7,9 @@ $per     = (int)($filters['per']  ?? 10);
 $pages   = (int)($pages ?? 1);
 $total   = $total ?? null;
 
+// Applied job IDs for the logged-in Candidate (controller should pass this)
+$appliedIds = $appliedIds ?? []; // array<int> of job_posting_id
+
 $qs = function (array $overrides = []) use ($filters) {
     $q = array_filter(array_merge($filters, $overrides), fn($v) => $v !== '' && $v !== null);
     if (($q['page'] ?? 1) == 1) unset($q['page']);
@@ -92,9 +95,13 @@ $to   = $total ? min($from + $per - 1, $total) : 0;
                     $salaryMin = $j['salary_range_min'] ?? null;
                     $salaryTxt = ($salaryMin !== null && $salaryMin !== '') ? 'RM ' . number_format((float)$salaryMin, 0) : '—';
                     $etype  = htmlspecialchars((string)($j['employment_type'] ?? ''));
+                    $isApplied = in_array($id, $appliedIds, true);
                     ?>
                     <div class="col-12 col-sm-6 col-lg-4 col-xl-3">
-                        <div class="card h-100 shadow-sm">
+                        <div class="card h-100 shadow-sm position-relative">
+                            <?php if ($isApplied): ?>
+                                <span class="position-absolute top-0 end-0 m-2 badge text-bg-success">Applied</span>
+                            <?php endif; ?>
                             <div class="card-body">
                                 <div class="d-flex align-items-center mb-2">
                                     <div class="border bg-light d-flex align-items-center justify-content-center rounded flex-shrink-0" style="width:48px;height:48px;">
@@ -119,7 +126,11 @@ $to   = $total ? min($from + $per - 1, $total) : 0;
                             <div class="card-footer d-flex justify-content-between align-items-center">
                                 <span class="badge text-bg-light border"><?= htmlspecialchars($salaryTxt) ?></span>
                                 <span class="text-muted small"><?= $etype ?></span>
-                                <a class="btn btn-sm btn-primary" href="<?= $base ?>/jobs/<?= $id ?>">Apply</a>
+                                <?php if ($isApplied): ?>
+                                    <a class="btn btn-sm btn-outline-secondary" href="<?= $base ?>/jobs/<?= $id ?>">View</a>
+                                <?php else: ?>
+                                    <a class="btn btn-sm btn-primary" href="<?= $base ?>/jobs/<?= $id ?>">Apply</a>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>

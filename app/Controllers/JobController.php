@@ -219,6 +219,13 @@ final class JobController
     {
         $pdo = DB::conn();
 
+        $appliedIds = [];
+        if (($_SESSION['user']['role'] ?? '') === 'Candidate') {
+            $cid = (int)($_SESSION['user']['id'] ?? 0);
+            $qApplied = $pdo->prepare("SELECT job_posting_id FROM applications WHERE candidate_id = :cid");
+            $qApplied->execute([':cid' => $cid]);
+            $appliedIds = array_map('intval', array_column($qApplied->fetchAll() ?: [], 'job_posting_id'));
+        }
         $q        = trim((string)($_GET['q'] ?? ''));
         $loc      = trim((string)($_GET['location'] ?? ''));
         $type     = trim((string)($_GET['type'] ?? ''));
@@ -288,6 +295,7 @@ final class JobController
         $title  = 'Jobs — HireMe';
         $viewFile = $root . '/app/Views/jobs/index.php';
         $filters = ['q' => $q, 'location' => $loc, 'type' => $type, 'company' => $company, 'min_salary' => $minSal, 'languages' => $langs, 'per' => $perPage, 'page' => $page];
+        $appliedIds = $appliedIds;
         require $root . '/app/Views/layout.php';
     }
 
