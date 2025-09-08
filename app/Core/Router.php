@@ -27,7 +27,17 @@ final class Router
     private function compile(string $path): string
     {
         if ($path === '/' || $path === '') return '#^/$#';
-        $regex = preg_replace('#\{([a-zA-Z_][a-zA-Z0-9_]*)\}#', '(?P<$1>[^/]+)', $path);
+
+        $regex = preg_replace_callback(
+            '#\{([a-zA-Z_][a-zA-Z0-9_]*)(?::([^}]+))?\}#',
+            static function (array $m): string {
+                $name = $m[1];
+                $constraint = $m[2] ?? '[^/]+';
+                return '(?P<' . $name . '>' . $constraint . ')';
+            },
+            $path
+        );
+
         $regex = rtrim($regex, '/');
         return '#^' . $regex . '/?$#';
     }
