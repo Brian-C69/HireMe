@@ -23,7 +23,7 @@ $base = defined('BASE_URL') ? BASE_URL : '';
                         <div class="card-body">
                             <h5 class="card-title">Build/Update Resume</h5>
                             <p class="card-text text-muted">Keep your profile sharp for faster callbacks.</p>
-                            <a class="btn btn-primary" href="<?= $base ?>/profile/resume">Open Resume</a>
+                            <a class="btn btn-primary" href="<?= $base ?>/resume">Open Resume</a>
                         </div>
                     </div>
                 </div>

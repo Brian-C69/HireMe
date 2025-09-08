@@ -25,6 +25,11 @@ use App\Core\Router;
 use App\Controllers\HomeController;
 use App\Controllers\AuthController;
 use App\Controllers\DashboardController;
+use App\Controllers\JobController;
+use App\Controllers\CandidateController;
+use App\Controllers\ResumeController;
+use App\Controllers\EmployerController;
+
 
 $router = new Router();
 
@@ -47,6 +52,25 @@ $router->get('/reset', [AuthController::class, 'showReset']);
 $router->post('/reset', [AuthController::class, 'processReset']);
 
 $router->get('/welcome', [DashboardController::class, 'welcome']);
+
+$router->get('/jobs/create', [JobController::class, 'create']);
+
+// Candidate profile (resume)
+$router->get('/account', [CandidateController::class, 'edit']);
+$router->post('/account', [CandidateController::class, 'update']);
+
+$router->get('/resume', [ResumeController::class, 'edit']);
+$router->post('/resume', [ResumeController::class, 'update']);
+
+$router->get('/resume/pdf', [ResumeController::class, 'exportPdf']);
+
+$router->get('/jobs',          [JobController::class, 'index']);
+$router->get('/jobs/create',   [JobController::class, 'create']);  // Employer only
+$router->post('/jobs',         [JobController::class, 'store']);   // Employer only
+$router->get('/jobs/{id}',     [JobController::class, 'show']);
+
+$router->get('/company', [EmployerController::class, 'edit']);    // Employer profile
+$router->post('/company', [EmployerController::class, 'update']);
 
 // Normalize path relative to BASE_URL
 $method    = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');

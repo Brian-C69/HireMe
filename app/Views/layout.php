@@ -37,33 +37,58 @@ if ($flash) unset($_SESSION['flash']); // show-once
 <body>
     <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom sticky-top">
         <div class="container">
-            <a class="navbar-brand fw-bold" href="<?= $base ?>/index.php"><i class="bi bi-stars text-primary me-1"></i> HireMe</a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav"><span class="navbar-toggler-icon"></span></button>
+            <?php $base = defined('BASE_URL') ? BASE_URL : ''; ?>
+            <a class="navbar-brand fw-bold" href="<?= $base ?>/index.php">
+                <i class="bi bi-stars text-primary me-1"></i> HireMe
+            </a>
+
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
             <div id="nav" class="collapse navbar-collapse">
-                <?php if (!empty($_SESSION['user'])): ?>
-                    <ul class="navbar-nav me-auto">
-                        <a href="<?= $base ?>/welcome" class="btn btn-outline-primary me-2">Dashboard</a>
-                    </ul>
-                    <div class="d-flex gap-2">
-                        <span class="navbar-text small me-2 text-muted">
-                            <?= htmlspecialchars($_SESSION['user']['email'] ?? '') ?> (<?= htmlspecialchars($_SESSION['user']['role'] ?? '') ?>)
-                        </span>
-                        <a href="<?= $base ?>/logout" class="btn btn-outline-secondary">Logout</a>
-                    </div>
-                <?php else: ?>
-                    <ul class="navbar-nav me-auto">
+                <?php $isAuth = !empty($_SESSION['user']);
+                $role = $_SESSION['user']['role'] ?? ''; ?>
+                <ul class="navbar-nav me-auto">
+                    <!-- Always visible -->
+                    <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs">Job Posts</a></li>
+
+                    <?php if ($isAuth): ?>
+                        <li class="nav-item"><a class="nav-link" href="<?= $base ?>/welcome">Dashboard</a></li>
+
+                        <?php if ($role === 'Employer'): ?>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/company">Company</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs/create">Post Job</a></li>
+                        <?php elseif ($role === 'Recruiter'): ?>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs/create">Post Job</a></li>
+                        <?php elseif ($role === 'Candidate'): ?>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/account">Profile</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/resume">Resume</a></li>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        <!-- Landing anchors for guests -->
                         <li class="nav-item"><a class="nav-link" href="<?= $base ?>/index.php#features">Features</a></li>
                         <li class="nav-item"><a class="nav-link" href="<?= $base ?>/index.php#how">How It Works</a></li>
                         <li class="nav-item"><a class="nav-link" href="<?= $base ?>/index.php#roles">Roles</a></li>
-                    </ul>
-                    <div class="d-flex gap-2">
+                    <?php endif; ?>
+                </ul>
+
+                <div class="d-flex gap-2 align-items-center">
+                    <?php if ($isAuth): ?>
+                        <span class="navbar-text small text-muted">
+                            <?= htmlspecialchars($_SESSION['user']['email'] ?? '') ?> (<?= htmlspecialchars($role) ?>)
+                        </span>
+                        <a href="<?= $base ?>/logout" class="btn btn-outline-secondary">Logout</a>
+                    <?php else: ?>
                         <a href="<?= $base ?>/login" class="btn btn-outline-primary">Login</a>
                         <a href="<?= $base ?>/register" class="btn btn-primary">Get Started</a>
-                    </div>
-                <?php endif; ?>
+                    <?php endif; ?>
+                </div>
             </div>
         </div>
     </nav>
+
+
 
     <?php if ($flash): ?>
         <div class="container mt-3">
