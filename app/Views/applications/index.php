@@ -97,6 +97,12 @@ $badge = function (string $s): string {
                         </div>
                         <div class="card-footer d-flex justify-content-end">
                             <a class="btn btn-sm btn-outline-primary" href="<?= $base ?>/jobs/<?= $jid ?>">View Job</a>
+                            <?php if ($withdrawable($stat)): ?>
+                                <form action="<?= $base ?>/applications/<?= $appId ?>/withdraw" method="post" onsubmit="return confirm('Withdraw this application? This cannot be undone.');" class="d-inline">
+                                    <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
+                                    <button class="btn btn-sm btn-outline-danger" type="submit">Withdraw</button>
+                                </form>
+                            <?php endif; ?>
                         </div>
                     </div>
                 <?php endforeach; ?>
@@ -112,10 +118,10 @@ $badge = function (string $s): string {
                         <?php $start = max(1, $page - 2);
                         $end = min($pages, $page + 2);
                         if ($start > 1): ?><li class="page-item disabled"><span class="page-link">…</span></li><?php endif;
-                                                                                            for ($i = $start; $i <= $end; $i++): ?>
+                                                                                                            for ($i = $start; $i <= $end; $i++): ?>
                             <li class="page-item <?= $i === $page ? 'active' : '' ?>"><a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $i]) ?>"><?= $i ?></a></li>
                         <?php endfor;
-                                                                                            if ($end < $pages): ?><li class="page-item disabled"><span class="page-link">…</span></li><?php endif; ?>
+                                                                                                            if ($end < $pages): ?><li class="page-item disabled"><span class="page-link">…</span></li><?php endif; ?>
                         <li class="page-item <?= $page >= $pages ? 'disabled' : '' ?>"><a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $next]) ?>">Next</a></li>
                         <li class="page-item <?= $page >= $pages ? 'disabled' : '' ?>"><a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $pages]) ?>">Last</a></li>
                     </ul>

@@ -32,7 +32,7 @@ $badgeClass = function (string $s): string {
                     <strong>Salary</strong><br><span class="text-muted">(<?= htmlspecialchars($salary) ?>)</span>
                 </div>
 
-                <?php if ($role === 'Candidate' && $myApp): ?>
+                <?php if (($role === 'Candidate') && $myApp): ?>
                     <div class="border rounded px-3 py-2 mt-3 text-center">
                         <div class="<?= $badgeClass($myApp['application_status'] ?? 'Applied') ?>">
                             <?= htmlspecialchars($myApp['application_status'] ?? 'Applied') ?>
@@ -41,13 +41,20 @@ $badgeClass = function (string $s): string {
                             Applied on <?= htmlspecialchars(date('d/m/Y', strtotime((string)($myApp['application_date'] ?? 'now')))) ?>
                         </div>
                     </div>
-                    <button class="btn btn-secondary w-100 mt-3" type="button" disabled title="Already applied">
-                        Applied
-                    </button>
+
+                    <?php $withdrawable = in_array((string)($myApp['application_status'] ?? ''), ['Applied', 'Reviewed'], true); ?>
+                    <?php if ($withdrawable): ?>
+                        <form action="<?= $base ?>/applications/<?= (int)$myApp['applicant_id'] ?>/withdraw" method="post" class="mt-3" onsubmit="return confirm('Withdraw this application?');">
+                            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
+                            <button class="btn btn-outline-danger w-100" type="submit">Withdraw Application</button>
+                        </form>
+                    <?php else: ?>
+                        <button class="btn btn-secondary w-100 mt-3" type="button" disabled>Applied</button>
+                    <?php endif; ?>
+
                 <?php else: ?>
-                    <button class="btn btn-primary w-100 mt-3" type="button" data-bs-toggle="modal" data-bs-target="#applyModal">
-                        Apply Job
-                    </button>
+                    <!-- original Apply button or modal trigger -->
+                    <button class="btn btn-primary w-100 mt-3" type="button" data-bs-toggle="modal" data-bs-target="#applyModal">Apply Job</button>
                 <?php endif; ?>
             </div>
 

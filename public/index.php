@@ -62,6 +62,7 @@ $router->post('/resume', [ResumeController::class, 'update']);
 $router->get('/resume/pdf', [ResumeController::class, 'exportPdf']);
 
 $router->get('/applications', [\App\Controllers\ApplicationController::class, 'index']); // Candidate “My Applications”
+$router->post('/applications/{id}/withdraw', [\App\Controllers\ApplicationController::class, 'withdraw']);
 
 // Jobs (order matters: static before dynamic!)
 $router->get('/jobs',        [JobController::class, 'index']);

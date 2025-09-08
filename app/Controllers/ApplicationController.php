@@ -174,6 +174,56 @@ final class ApplicationController
         $this->redirect('/jobs/' . $jobId);
     }
 
+    /** helper: statuses that can be withdrawn by candidate */
+    private function isWithdrawable(string $status): bool
+    {
+        return in_array($status, ['Applied', 'Reviewed'], true);
+    }
+
+    /** POST /applications/{id}/withdraw */
+    public function withdraw(array $params = []): void
+    {
+        Auth::requireRole('Candidate');
+        if (!$this->csrfOk()) {
+            $this->flash('danger', 'Invalid session.');
+            $this->redirect('/applications');
+        }
+
+        $appId = (int)($params['id'] ?? 0);
+        $cid   = (int)($_SESSION['user']['id'] ?? 0);
+        if ($appId <= 0 || $cid <= 0) {
+            $this->flash('danger', 'Invalid request.');
+            $this->redirect('/applications');
+        }
+
+        $pdo = DB::conn();
+        $st  = $pdo->prepare("
+            SELECT a.applicant_id, a.application_status, a.job_posting_id
+            FROM applications a
+            WHERE a.applicant_id = :id AND a.candidate_id = :cid
+            LIMIT 1
+        ");
+        $st->execute([':id' => $appId, ':cid' => $cid]);
+        $app = $st->fetch();
+
+        if (!$app) {
+            $this->flash('danger', 'Application not found.');
+            $this->redirect('/applications');
+        }
+        if (!$this->isWithdrawable((string)$app['application_status'])) {
+            $this->flash('warning', 'This application cannot be withdrawn.');
+            $this->redirect('/applications');
+        }
+
+        $pdo->prepare("UPDATE applications SET application_status='Withdrawn', updated_at=:u WHERE applicant_id=:id")
+            ->execute([':u' => date('Y-m-d H:i:s'), ':id' => $appId]);
+
+        $this->flash('success', 'Application withdrawn.');
+        // Prefer to return to the job page; fallback to list
+        $jid = (int)$app['job_posting_id'];
+        $this->redirect($jid ? '/jobs/' . $jid : '/applications');
+    }
+
     /** GET /applications — Candidate’s applications with filters + pagination */
     public function index(array $params = []): void
     {

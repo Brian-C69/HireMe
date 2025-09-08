@@ -50,16 +50,23 @@ final class JobController
         return isset($_POST['csrf'], $_SESSION['csrf']) && hash_equals($_SESSION['csrf'], (string)$_POST['csrf']);
     }
 
-    /** GET /jobs/create (Employer only for now) */
+    /** GET /jobs/create (Employer + Recruiter) */
     public function create(array $params = []): void
     {
-        Auth::requireRole('Employer');
+        Auth::requireRole(['Employer', 'Recruiter']);
 
         $pdo = DB::conn();
         $uid = (int)($_SESSION['user']['id'] ?? 0);
-        $employer = $pdo->query("SELECT * FROM employers WHERE employer_id = " . (int)$uid)->fetch() ?: [];
+        $role = $_SESSION['user']['role'] ?? '';
 
-        // Micro Interview question bank (8 defaults, active)
+        // why: recruiter must choose which company to post for
+        $companies = [];
+        if ($role === 'Recruiter') {
+            $companies = $pdo->query("SELECT employer_id, company_name FROM employers ORDER BY company_name ASC")->fetchAll() ?: [];
+        } else {
+            $companies = $pdo->query("SELECT employer_id, company_name FROM employers WHERE employer_id = " . (int)$uid)->fetchAll() ?: [];
+        }
+
         $qbank = $pdo->query("SELECT id, prompt FROM micro_questions WHERE active = 1 ORDER BY id ASC")->fetchAll() ?: [];
 
         $root   = dirname(__DIR__, 2);
@@ -71,83 +78,94 @@ final class JobController
         require $root . '/app/Views/layout.php';
     }
 
-    /** POST /jobs (Employer only for now) */
+    /** POST /jobs  (Employer + Recruiter) */
     public function store(array $params = []): void
     {
-        Auth::requireRole('Candidate');
+        Auth::requireRole(['Employer', 'Recruiter']);
         if (!$this->csrfOk()) {
             $this->flash('danger', 'Invalid session.');
-            $this->redirect('/jobs');
+            $this->redirect('/jobs/create');
         }
 
-        $jobId = (int)($_POST['job_id'] ?? 0);
-        $pdo   = DB::conn();
+        $role    = $_SESSION['user']['role'] ?? '';
+        $userId  = (int)($_SESSION['user']['id'] ?? 0);
 
-        // load 3 questions for validation
-        $qrows = $pdo->prepare("
-          SELECT mq.id, mq.prompt
-          FROM job_micro_questions jmq
-          JOIN micro_questions mq ON mq.id = jmq.question_id
-          WHERE jmq.job_posting_id = :id
-          ORDER BY mq.id ASC
-        ");
-        $qrows->execute([':id' => $jobId]);
-        $qrows = $qrows->fetchAll() ?: [];
+        // Inputs
+        $title   = trim((string)($_POST['job_title'] ?? ''));
+        $desc    = trim((string)($_POST['job_description'] ?? ''));
+        $loc     = trim((string)($_POST['job_location'] ?? ''));
+        $langs   = trim((string)($_POST['job_languages'] ?? ''));
+        $salary  = (string)($_POST['salary'] ?? '');
+        $empType = trim((string)($_POST['employment_type'] ?? 'Full-time'));
 
-        $answers = [];
-        foreach ($qrows as $q) {
-            $key = 'answer_' . $q['id'];
-            $txt = trim((string)($_POST[$key] ?? ''));
-            $answers[] = ['qid' => (int)$q['id'], 'text' => $txt];
-        }
+        // Company selection for Recruiter
+        $companyId = ($role === 'Employer')
+            ? $userId
+            : (int)($_POST['company_id'] ?? 0);
 
+        // exactly 3 micro-questions
+        $chosen = array_values(array_filter((array)($_POST['mi_questions'] ?? []), fn($v) => ctype_digit((string)$v)));
+        $chosen = array_unique(array_map('intval', $chosen));
+
+        // Validation
         $errors = [];
-        foreach ($answers as $a) {
-            if ($a['text'] === '') $errors['answer_' . $a['qid']] = 'Please provide an answer.';
-            elseif (mb_strlen($a['text']) > 1000) $errors['answer_' . $a['qid']] = 'Max 1000 characters.';
-        }
+        if ($title === '') $errors['job_title'] = 'Job title is required.';
+        if ($desc  === '') $errors['job_description'] = 'Description is required.';
+        if ($salary !== '' && !is_numeric($salary)) $errors['salary'] = 'Salary must be numeric (e.g., 3500).';
+        if ($role === 'Recruiter' && $companyId <= 0) $errors['company_id'] = 'Please select a company.';
+        if (count($chosen) !== 3) $errors['mi_questions'] = 'Please select exactly 3 questions.';
+
         if ($errors) {
-            $_SESSION['errors'] = $errors;
-            $_SESSION['old'] = $_POST;
-            $_SESSION['open_apply_modal'] = true; // auto open modal on job page
-            $this->redirect('/jobs/' . $jobId);
+            $this->setErrors($errors);
+            $this->setOld($_POST);
+            $this->redirect('/jobs/create');
         }
 
-        // create application + answers
+        $pdo = DB::conn();
+        $now = date('Y-m-d H:i:s');
+
         $pdo->beginTransaction();
         try {
-            $now = date('Y-m-d H:i:s');
-            $cid = (int)($_SESSION['user']['id'] ?? 0);
+            $sql = "INSERT INTO job_postings
+                (company_id, recruiter_id, job_title, job_description, job_requirements, job_location, job_languages,
+                 employment_type, salary_range_min, salary_range_max, application_deadline, date_posted, status,
+                 number_of_positions, required_experience, education_level, created_at, updated_at)
+                VALUES
+                (:cid, :rid, :title, :desc, :reqs, :loc, :langs,
+                 :etype, :smin, NULL, NULL, :posted, 'Open',
+                 1, NULL, NULL, :ca, :ua)";
+            $st = $pdo->prepare($sql);
+            $st->execute([
+                ':cid'    => $companyId,
+                ':rid'    => ($role === 'Recruiter' ? $userId : null),
+                ':title'  => $title,
+                ':desc'   => $desc,
+                ':reqs'   => null,
+                ':loc'    => $loc ?: null,
+                ':langs'  => $langs ?: null,
+                ':etype'  => $empType ?: 'Full-time',
+                ':smin'   => ($salary === '' ? null : number_format((float)$salary, 2, '.', '')),
+                ':posted' => $now,
+                ':ca'     => $now,
+                ':ua'     => $now,
+            ]);
 
-            // prevent duplicate application
-            $du = $pdo->prepare("SELECT applicant_id FROM applications WHERE candidate_id=:cid AND job_posting_id=:jid LIMIT 1");
-            $du->execute([':cid' => $cid, ':jid' => $jobId]);
-            if ($du->fetch()) {
-                $pdo->rollBack();
-                $this->flash('warning', 'You already applied for this job.');
-                $this->redirect('/jobs/' . $jobId);
-            }
+            $jobId = (int)$pdo->lastInsertId();
 
-            $ins = $pdo->prepare("INSERT INTO applications
-              (candidate_id, job_posting_id, application_date, application_status, resume_url, cover_letter, notes, updated_at)
-              VALUES (:cid, :jid, :ad, 'Applied', NULL, NULL, NULL, :ua)");
-            $ins->execute([':cid' => $cid, ':jid' => $jobId, ':ad' => $now, ':ua' => $now]);
-
-            $appId = (int)$pdo->lastInsertId();
-            $ans = $pdo->prepare("INSERT INTO application_answers (application_id, question_id, answer_text, created_at)
-                                  VALUES (:aid,:qid,:txt,:ts)");
-            foreach ($answers as $a) {
-                $ans->execute([':aid' => $appId, ':qid' => $a['qid'], ':txt' => $a['text'], ':ts' => $now]);
+            // attach 3 questions
+            $ins = $pdo->prepare("INSERT INTO job_micro_questions (job_posting_id, question_id) VALUES (:jid, :qid)");
+            foreach ($chosen as $qid) {
+                $ins->execute([':jid' => $jobId, ':qid' => $qid]);
             }
 
             $pdo->commit();
         } catch (\Throwable $e) {
             $pdo->rollBack();
-            $this->flash('danger', 'Could not submit application.');
-            $this->redirect('/jobs/' . $jobId);
+            $this->flash('danger', 'Could not create job.');
+            $this->redirect('/jobs/create');
         }
 
-        $this->flash('success', 'Application submitted.');
+        $this->flash('success', 'Job created.');
         $this->redirect('/jobs/' . $jobId);
     }
 
