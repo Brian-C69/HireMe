@@ -269,16 +269,15 @@ final class JobController
 
     public function mine(array $params = []): void
     {
-        Auth::requireAny(['Employer', 'Recruiter']);
+        \App\Core\Auth::requireRole(['Employer', 'Recruiter']);
 
-        $pdo   = DB::conn();
-        $role  = $_SESSION['user']['role'] ?? '';
-        $uid   = (int)($_SESSION['user']['id'] ?? 0);
-        $stat  = trim((string)($_GET['status'] ?? '')); // optional filter
+        $pdo  = DB::conn();
+        $uid  = (int)($_SESSION['user']['id'] ?? 0);
+        $role = $_SESSION['user']['role'] ?? '';
+        $stat = trim((string)($_GET['status'] ?? '')); // optional filter
 
         $where = [];
-        $bind  = [];
-
+        $bind = [];
         if ($role === 'Employer') {
             $where[] = 'jp.company_id = :me';
             $bind[':me'] = $uid;
@@ -287,7 +286,6 @@ final class JobController
             $where[] = 'jp.recruiter_id = :me';
             $bind[':me'] = $uid;
         }
-
         if ($stat !== '') {
             $where[] = 'jp.status = :st';
             $bind[':st'] = $stat;
@@ -306,98 +304,84 @@ final class JobController
         $st->execute($bind);
         $jobs = $st->fetchAll() ?: [];
 
-        $root    = dirname(__DIR__, 2);
-        $title   = 'My Jobs — HireMe';
+        $root = dirname(__DIR__, 2);
+        $title = 'My Jobs — HireMe';
         $viewFile = $root . '/app/Views/jobs/mine.php';
         $statuses = $this->statusOptions();
         require $root . '/app/Views/layout.php';
     }
 
-    /** POST /jobs/{id}/status — update status (owner-only) */
+    /** POST /jobs/{id}/status — change status (Open, Paused, Suspended, Fulfilled, Closed, Deleted) */
     public function updateStatus(array $params = []): void
     {
-        Auth::requireAny(['Employer', 'Recruiter']);
+        \App\Core\Auth::requireRole(['Employer', 'Recruiter']);
         if (!$this->csrfOk()) {
             $this->flash('danger', 'Invalid session.');
             $this->redirect('/jobs/mine');
         }
 
-        $id   = (int)($params['id'] ?? 0);
-        $new  = trim((string)($_POST['status'] ?? ''));
-        $now  = date('Y-m-d H:i:s');
-
+        $id = (int)($params['id'] ?? 0);
+        $new = trim((string)($_POST['status'] ?? ''));
         if (!in_array($new, $this->statusOptions(), true)) {
             $this->flash('danger', 'Invalid status.');
             $this->redirect('/jobs/mine');
         }
 
         $pdo = DB::conn();
-        $job = $this->ownJob($pdo, $id);
-        if (!$job) {
+        if (!$this->ownJob($pdo, $id)) {
             $this->flash('danger', 'Not authorized.');
             $this->redirect('/jobs/mine');
         }
 
-        $st = $pdo->prepare("UPDATE job_postings SET status=:st, updated_at=:ua WHERE job_posting_id=:id");
-        $st->execute([':st' => $new, ':ua' => $now, ':id' => $id]);
+        $pdo->prepare("UPDATE job_postings SET status=:s, updated_at=:u WHERE job_posting_id=:id")
+            ->execute([':s' => $new, ':u' => date('Y-m-d H:i:s'), ':id' => $id]);
 
         $this->flash('success', 'Status updated.');
         $this->redirect('/jobs/mine');
     }
 
-    /** POST /jobs/{id}/delete — soft delete (status = Deleted) */
+    /** POST /jobs/{id}/delete — soft delete (status=Deleted) */
     public function destroy(array $params = []): void
     {
-        Auth::requireAny(['Employer', 'Recruiter']);
+        \App\Core\Auth::requireRole(['Employer', 'Recruiter']);
         if (!$this->csrfOk()) {
             $this->flash('danger', 'Invalid session.');
             $this->redirect('/jobs/mine');
         }
 
-        $id  = (int)($params['id'] ?? 0);
+        $id = (int)($params['id'] ?? 0);
         $pdo = DB::conn();
-        $job = $this->ownJob($pdo, $id);
-        if (!$job) {
+        if (!$this->ownJob($pdo, $id)) {
             $this->flash('danger', 'Not authorized.');
             $this->redirect('/jobs/mine');
         }
 
-        $now = date('Y-m-d H:i:s');
-        $pdo->prepare("UPDATE job_postings SET status='Deleted', updated_at=:ua WHERE job_posting_id=:id")
-            ->execute([':ua' => $now, ':id' => $id]);
+        $pdo->prepare("UPDATE job_postings SET status='Deleted', updated_at=:u WHERE job_posting_id=:id")
+            ->execute([':u' => date('Y-m-d H:i:s'), ':id' => $id]);
 
         $this->flash('success', 'Job deleted.');
         $this->redirect('/jobs/mine');
     }
 
-    /** Returns allowed statuses. */
+    /** Allowed statuses */
     private function statusOptions(): array
     {
         return ['Open', 'Paused', 'Suspended', 'Fulfilled', 'Closed', 'Deleted'];
     }
 
-    /** Verify current user owns job (Employer: company_id==me; Recruiter: recruiter_id==me). */
+    /** Ensure current user owns this job */
     private function ownJob(PDO $pdo, int $jobId): ?array
     {
         if ($jobId <= 0) return null;
-
-        $role = $_SESSION['user']['role'] ?? '';
-        $uid  = (int)($_SESSION['user']['id'] ?? 0);
-
-        $st = $pdo->prepare("
-          SELECT jp.*, e.company_name
-          FROM job_postings jp
-          JOIN employers e ON e.employer_id = jp.company_id
-          WHERE jp.job_posting_id = :id
-          LIMIT 1
-        ");
+        $st = $pdo->prepare("SELECT * FROM job_postings WHERE job_posting_id=:id LIMIT 1");
         $st->execute([':id' => $jobId]);
         $job = $st->fetch();
         if (!$job) return null;
 
+        $role = $_SESSION['user']['role'] ?? '';
+        $uid = (int)($_SESSION['user']['id'] ?? 0);
         if ($role === 'Employer'  && (int)$job['company_id']   === $uid) return $job;
         if ($role === 'Recruiter' && (int)($job['recruiter_id'] ?? 0) === $uid) return $job;
-
         return null;
     }
 }

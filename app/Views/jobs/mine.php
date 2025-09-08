@@ -2,21 +2,16 @@
 $base     = defined('BASE_URL') ? BASE_URL : '';
 $jobs     = $jobs ?? [];
 $statuses = $statuses ?? ['Open', 'Paused', 'Suspended', 'Fulfilled', 'Closed', 'Deleted'];
-$role     = $_SESSION['user']['role'] ?? '';
-$statSel  = $_GET['status'] ?? '';
 $badge = function (string $s): string {
     $map = ['Open' => 'success', 'Paused' => 'secondary', 'Suspended' => 'warning', 'Fulfilled' => 'info', 'Closed' => 'dark', 'Deleted' => 'danger'];
-    $v = $map[$s] ?? 'light';
-    return "badge text-bg-$v";
+    return 'badge text-bg-' . ($map[$s] ?? 'light');
 };
 ?>
 <section class="py-4">
     <div class="container">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h1 class="h4 mb-0">My Jobs</h1>
-            <div>
-                <a class="btn btn-primary" href="<?= $base ?>/jobs/create">Post Job</a>
-            </div>
+            <a class="btn btn-primary" href="<?= $base ?>/jobs/create">Post Job</a>
         </div>
 
         <form method="get" class="row g-2 align-items-end mb-3">
@@ -24,8 +19,9 @@ $badge = function (string $s): string {
                 <label class="form-label">Status</label>
                 <select class="form-select" name="status">
                     <option value="">All</option>
-                    <?php foreach ($statuses as $s): ?>
-                        <option value="<?= $s ?>" <?= $statSel === $s ? 'selected' : '' ?>><?= $s ?></option>
+                    <?php $sel = $_GET['status'] ?? '';
+                    foreach ($statuses as $s): ?>
+                        <option value="<?= $s ?>" <?= $sel === $s ? 'selected' : '' ?>><?= $s ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
@@ -43,7 +39,7 @@ $badge = function (string $s): string {
                     <thead>
                         <tr>
                             <th>Job</th>
-                            <th class="text-nowrap">Posted</th>
+                            <th>Posted</th>
                             <th>Status</th>
                             <th class="text-end">Actions</th>
                         </tr>
@@ -51,35 +47,31 @@ $badge = function (string $s): string {
                     <tbody>
                         <?php foreach ($jobs as $j): ?>
                             <?php
-                            $id    = (int)$j['job_posting_id'];
+                            $id = (int)$j['job_posting_id'];
                             $title = htmlspecialchars($j['job_title'] ?? '');
-                            $comp  = htmlspecialchars($j['company_name'] ?? '');
+                            $company = htmlspecialchars($j['company_name'] ?? '');
                             $posted = $j['date_posted'] ? date('d/m/Y', strtotime((string)$j['date_posted'])) : '';
                             $status = $j['status'] ?? 'Open';
                             ?>
                             <tr>
                                 <td>
                                     <div class="fw-semibold"><?= $title ?></div>
-                                    <div class="text-muted small"><?= $comp ?></div>
+                                    <div class="text-muted small"><?= $company ?></div>
                                 </td>
                                 <td><?= htmlspecialchars($posted) ?></td>
                                 <td><span class="<?= $badge($status) ?>"><?= htmlspecialchars($status) ?></span></td>
                                 <td class="text-end">
                                     <a class="btn btn-sm btn-outline-primary" href="<?= $base ?>/jobs/<?= $id ?>">View</a>
-
-                                    <!-- Change status -->
                                     <form action="<?= $base ?>/jobs/<?= $id ?>/status" method="post" class="d-inline">
                                         <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
-                                        <select name="status" class="form-select form-select-sm d-inline w-auto">
+                                        <select name="status" class="form-select form-select-sm d-inline w-auto me-1">
                                             <?php foreach ($statuses as $s): ?>
                                                 <option value="<?= $s ?>" <?= $status === $s ? 'selected' : '' ?>><?= $s ?></option>
                                             <?php endforeach; ?>
                                         </select>
                                         <button class="btn btn-sm btn-outline-secondary" type="submit">Update</button>
                                     </form>
-
-                                    <!-- Soft delete -->
-                                    <form action="<?= $base ?>/jobs/<?= $id ?>/delete" method="post" class="d-inline" onsubmit="return confirm('Delete this job? This will mark it as Deleted.');">
+                                    <form action="<?= $base ?>/jobs/<?= $id ?>/delete" method="post" class="d-inline" onsubmit="return confirm('Mark as Deleted?');">
                                         <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
                                         <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
                                     </form>
