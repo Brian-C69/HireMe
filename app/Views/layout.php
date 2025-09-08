@@ -58,8 +58,10 @@ if ($flash) unset($_SESSION['flash']); // show-once
 
                         <?php if ($role === 'Employer'): ?>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/company">Company</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs/mine">My Jobs</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs/create">Post Job</a></li>
                         <?php elseif ($role === 'Recruiter'): ?>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs/mine">My Jobs</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs/create">Post Job</a></li>
                         <?php elseif ($role === 'Candidate'): ?>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/account">Profile</a></li>

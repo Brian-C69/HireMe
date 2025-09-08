@@ -29,7 +29,7 @@ use App\Controllers\JobController;
 use App\Controllers\CandidateController;
 use App\Controllers\ResumeController;
 use App\Controllers\EmployerController;
-
+use App\Controllers\ApplicationController;
 
 $router = new Router();
 
@@ -71,6 +71,15 @@ $router->get('/jobs/{id}',     [JobController::class, 'show']);
 
 $router->get('/company', [EmployerController::class, 'edit']);    // Employer profile
 $router->post('/company', [EmployerController::class, 'update']);
+
+$router->get('/jobs/{id}/apply', [ApplicationController::class, 'create']);   // pretty URL
+$router->get('/applications/create', [ApplicationController::class, 'create']); // legacy with ?job=
+$router->post('/applications', [ApplicationController::class, 'store']);
+
+
+$router->get('/jobs/mine',              [JobController::class, 'mine']);          // owner list
+$router->post('/jobs/{id}/status',      [JobController::class, 'updateStatus']);  // change status
+$router->post('/jobs/{id}/delete',      [JobController::class, 'destroy']);       // soft delete
 
 // Normalize path relative to BASE_URL
 $method    = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');

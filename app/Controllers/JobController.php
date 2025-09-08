@@ -7,7 +7,6 @@ namespace App\Controllers;
 use App\Core\Auth;
 use App\Core\DB;
 use PDO;
-use Throwable;
 
 final class JobController
 {
@@ -51,36 +50,20 @@ final class JobController
         return isset($_POST['csrf'], $_SESSION['csrf']) && hash_equals($_SESSION['csrf'], (string)$_POST['csrf']);
     }
 
-    /** GET /jobs (public list) */
-    public function index(array $params = []): void
-    {
-        $pdo = DB::conn();
-        $sql = "
-        SELECT jp.*, e.company_name, e.company_logo
-        FROM job_postings jp
-        JOIN employers e ON e.employer_id = jp.company_id
-        WHERE jp.status = 'Open'
-        ORDER BY jp.date_posted DESC, jp.job_posting_id DESC
-        LIMIT 50";
-        $jobs = $pdo->query($sql)->fetchAll() ?: [];
-
-        $root = dirname(__DIR__, 2);
-        $title = 'Jobs — HireMe';
-        $viewFile = $root . '/app/Views/jobs/index.php';
-        require $root . '/app/Views/layout.php';
-    }
-
-    /** GET /jobs/create (Employer only) */
+    /** GET /jobs/create (Employer only for now) */
     public function create(array $params = []): void
     {
-        \App\Core\Auth::requireRole('Employer');
+        Auth::requireRole('Employer');
 
         $pdo = DB::conn();
         $uid = (int)($_SESSION['user']['id'] ?? 0);
         $employer = $pdo->query("SELECT * FROM employers WHERE employer_id = " . (int)$uid)->fetch() ?: [];
 
-        $root = dirname(__DIR__, 2);
-        $title = 'Post a Job — HireMe';
+        // Micro Interview question bank (8 defaults, active)
+        $qbank = $pdo->query("SELECT id, prompt FROM micro_questions WHERE active = 1 ORDER BY id ASC")->fetchAll() ?: [];
+
+        $root   = dirname(__DIR__, 2);
+        $title  = 'Post a Job — HireMe';
         $viewFile = $root . '/app/Views/jobs/create.php';
         $errors = $this->takeErrors();
         $old    = $this->takeOld();
@@ -88,10 +71,10 @@ final class JobController
         require $root . '/app/Views/layout.php';
     }
 
-    /** POST /jobs (Employer only) */
+    /** POST /jobs (Employer only for now) */
     public function store(array $params = []): void
     {
-        \App\Core\Auth::requireRole('Employer');
+        Auth::requireRole('Employer');
         if (!$this->csrfOk()) {
             $this->flash('danger', 'Invalid session.');
             $this->redirect('/jobs/create');
@@ -103,12 +86,16 @@ final class JobController
         $langs   = trim((string)($_POST['job_languages'] ?? ''));
         $salary  = (string)($_POST['salary'] ?? '');
         $empType = trim((string)($_POST['employment_type'] ?? 'Full-time'));
-        $date    = date('Y-m-d H:i:s');
+
+        // Micro Interview selection (must be exactly 3)
+        $chosen = array_values(array_filter((array)($_POST['mi_questions'] ?? []), fn($v) => ctype_digit((string)$v)));
+        $chosen = array_unique(array_map('intval', $chosen));
 
         $errors = [];
         if ($title === '') $errors['job_title'] = 'Job title is required.';
         if ($desc  === '') $errors['job_description'] = 'Description is required.';
         if ($salary !== '' && !is_numeric($salary)) $errors['salary'] = 'Salary must be numeric (e.g., 3500).';
+        if (count($chosen) !== 3) $errors['mi_questions'] = 'Please select exactly 3 questions.';
 
         if ($errors) {
             $this->setErrors($errors);
@@ -118,30 +105,50 @@ final class JobController
 
         $pdo = DB::conn();
         $uid = (int)($_SESSION['user']['id'] ?? 0);
+        $now = date('Y-m-d H:i:s');
 
-        $sql = "INSERT INTO job_postings
-          (company_id, recruiter_id, job_title, job_description, job_requirements, job_location, job_languages, employment_type, salary_range_min, salary_range_max, application_deadline, date_posted, status, number_of_positions, required_experience, education_level, created_at, updated_at)
-          VALUES
-          (:cid, NULL, :title, :desc, :reqs, :loc, :langs, :etype, :smin, NULL, NULL, :posted, 'Open', 1, NULL, NULL, :ca, :ua)";
-        $st = $pdo->prepare($sql);
-        $now = $date;
-        $st->execute([
-            ':cid'    => $uid,
-            ':title'  => $title,
-            ':desc'   => $desc,
-            ':reqs'   => null,
-            ':loc'    => $loc ?: null,
-            ':langs'  => $langs ?: null,           // requires 006 migration; else set to null and keep languages inside desc
-            ':etype'  => $empType ?: 'Full-time',
-            ':smin'   => ($salary === '' ? null : number_format((float)$salary, 2, '.', '')),
-            ':posted' => $date,
-            ':ca'     => $now,
-            ':ua'     => $now,
-        ]);
+        $pdo->beginTransaction();
+        try {
+            // Insert job
+            $sql = "INSERT INTO job_postings
+              (company_id, recruiter_id, job_title, job_description, job_requirements, job_location, job_languages,
+               employment_type, salary_range_min, salary_range_max, application_deadline, date_posted, status,
+               number_of_positions, required_experience, education_level, created_at, updated_at)
+              VALUES
+              (:cid, NULL, :title, :desc, :reqs, :loc, :langs, :etype, :smin, NULL, NULL, :posted, 'Open',
+               1, NULL, NULL, :ca, :ua)";
+            $st = $pdo->prepare($sql);
+            $st->execute([
+                ':cid'    => $uid,
+                ':title'  => $title,
+                ':desc'   => $desc,
+                ':reqs'   => null,
+                ':loc'    => $loc ?: null,
+                ':langs'  => $langs ?: null,
+                ':etype'  => $empType ?: 'Full-time',
+                ':smin'   => ($salary === '' ? null : number_format((float)$salary, 2, '.', '')),
+                ':posted' => $now,
+                ':ca'     => $now,
+                ':ua'     => $now,
+            ]);
 
-        $id = (int)$pdo->lastInsertId();
+            $jobId = (int)$pdo->lastInsertId();
+
+            // Attach 3 selected micro questions
+            $ins = $pdo->prepare("INSERT INTO job_micro_questions (job_posting_id, question_id) VALUES (:jid, :qid)");
+            foreach ($chosen as $qid) {
+                $ins->execute([':jid' => $jobId, ':qid' => $qid]);
+            }
+
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $this->flash('danger', 'Could not create job.');
+            $this->redirect('/jobs/create');
+        }
+
         $this->flash('success', 'Job created.');
-        $this->redirect('/jobs/' . $id);
+        $this->redirect('/jobs/' . $jobId);
     }
 
     /** GET /jobs/{id} (public) */
@@ -149,6 +156,7 @@ final class JobController
     {
         $id  = (int)($params['id'] ?? 0);
         $pdo = DB::conn();
+
         $st = $pdo->prepare("
           SELECT jp.*, e.company_name, e.company_logo
           FROM job_postings jp
@@ -165,9 +173,231 @@ final class JobController
             return;
         }
 
-        $root = dirname(__DIR__, 2);
-        $title = htmlspecialchars($job['job_title']) . ' — ' . $job['company_name'] . ' | HireMe';
+        // Load the attached 3 micro questions
+        $qs = $pdo->prepare("
+          SELECT mq.id, mq.prompt
+          FROM job_micro_questions jmq
+          JOIN micro_questions mq ON mq.id = jmq.question_id
+          WHERE jmq.job_posting_id = :id
+          ORDER BY mq.id ASC
+        ");
+        $qs->execute([':id' => $id]);
+        $questions = $qs->fetchAll() ?: [];
+
+        $root   = dirname(__DIR__, 2);
+        $title  = htmlspecialchars($job['job_title']) . ' — ' . $job['company_name'] . ' | HireMe';
         $viewFile = $root . '/app/Views/jobs/show.php';
         require $root . '/app/Views/layout.php';
+    }
+
+    /** GET /jobs — with search, filters, pagination */
+    public function index(array $params = []): void
+    {
+        $pdo = DB::conn();
+
+        $q        = trim((string)($_GET['q'] ?? ''));
+        $loc      = trim((string)($_GET['location'] ?? ''));
+        $type     = trim((string)($_GET['type'] ?? ''));
+        $company  = trim((string)($_GET['company'] ?? ''));
+        $minSal   = (string)($_GET['min_salary'] ?? '');
+        $langs    = trim((string)($_GET['languages'] ?? ''));
+        $perPage  = max(1, min(50, (int)($_GET['per'] ?? 10)));
+        $page     = max(1, (int)($_GET['page'] ?? 1));
+        $offset   = ($page - 1) * $perPage;
+
+        $where  = ["jp.status = 'Open'"];
+        $bind   = [];
+
+        if ($q !== '') {
+            $where[] = "(jp.job_title LIKE :q OR jp.job_description LIKE :q OR e.company_name LIKE :q)";
+            $bind[':q'] = "%$q%";
+        }
+        if ($loc !== '') {
+            $where[] = "jp.job_location LIKE :loc";
+            $bind[':loc'] = "%$loc%";
+        }
+        if ($type !== '') {
+            $where[] = "jp.employment_type = :type";
+            $bind[':type'] = $type;
+        }
+        if ($company !== '') {
+            $where[] = "e.company_name LIKE :company";
+            $bind[':company'] = "%$company%";
+        }
+        if ($minSal !== '' && is_numeric($minSal)) {
+            $where[] = "jp.salary_range_min >= :minsal";
+            $bind[':minsal'] = (float)$minSal;
+        }
+        if ($langs !== '') {
+            $where[] = "jp.job_languages LIKE :langs";
+            $bind[':langs'] = "%$langs%";
+        }
+
+        $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        $sqlCount = "SELECT COUNT(*) FROM job_postings jp JOIN employers e ON e.employer_id = jp.company_id $whereSql";
+        $st = $pdo->prepare($sqlCount);
+        $st->execute($bind);
+        $total = (int)($st->fetchColumn() ?: 0);
+
+        $sql = "
+          SELECT jp.*, e.company_name, e.company_logo
+          FROM job_postings jp
+          JOIN employers e ON e.employer_id = jp.company_id
+          $whereSql
+          ORDER BY jp.date_posted DESC, jp.job_posting_id DESC
+          LIMIT :limit OFFSET :offset
+        ";
+        $st = $pdo->prepare($sql);
+        foreach ($bind as $k => $v) $st->bindValue($k, $v);
+        $st->bindValue(':limit',  $perPage, PDO::PARAM_INT);
+        $st->bindValue(':offset', $offset,  PDO::PARAM_INT);
+        $st->execute();
+        $jobs = $st->fetchAll() ?: [];
+
+        $pages = max(1, (int)ceil($total / $perPage));
+        if ($page > $pages) {
+            $page = $pages;
+        }
+
+        $root   = dirname(__DIR__, 2);
+        $title  = 'Jobs — HireMe';
+        $viewFile = $root . '/app/Views/jobs/index.php';
+        $filters = ['q' => $q, 'location' => $loc, 'type' => $type, 'company' => $company, 'min_salary' => $minSal, 'languages' => $langs, 'per' => $perPage, 'page' => $page];
+        require $root . '/app/Views/layout.php';
+    }
+
+    public function mine(array $params = []): void
+    {
+        Auth::requireAny(['Employer', 'Recruiter']);
+
+        $pdo   = DB::conn();
+        $role  = $_SESSION['user']['role'] ?? '';
+        $uid   = (int)($_SESSION['user']['id'] ?? 0);
+        $stat  = trim((string)($_GET['status'] ?? '')); // optional filter
+
+        $where = [];
+        $bind  = [];
+
+        if ($role === 'Employer') {
+            $where[] = 'jp.company_id = :me';
+            $bind[':me'] = $uid;
+        }
+        if ($role === 'Recruiter') {
+            $where[] = 'jp.recruiter_id = :me';
+            $bind[':me'] = $uid;
+        }
+
+        if ($stat !== '') {
+            $where[] = 'jp.status = :st';
+            $bind[':st'] = $stat;
+        }
+
+        $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+        $sql = "
+          SELECT jp.*, e.company_name, e.company_logo
+          FROM job_postings jp
+          JOIN employers e ON e.employer_id = jp.company_id
+          $whereSql
+          ORDER BY jp.date_posted DESC, jp.job_posting_id DESC
+          LIMIT 200
+        ";
+        $st = $pdo->prepare($sql);
+        $st->execute($bind);
+        $jobs = $st->fetchAll() ?: [];
+
+        $root    = dirname(__DIR__, 2);
+        $title   = 'My Jobs — HireMe';
+        $viewFile = $root . '/app/Views/jobs/mine.php';
+        $statuses = $this->statusOptions();
+        require $root . '/app/Views/layout.php';
+    }
+
+    /** POST /jobs/{id}/status — update status (owner-only) */
+    public function updateStatus(array $params = []): void
+    {
+        Auth::requireAny(['Employer', 'Recruiter']);
+        if (!$this->csrfOk()) {
+            $this->flash('danger', 'Invalid session.');
+            $this->redirect('/jobs/mine');
+        }
+
+        $id   = (int)($params['id'] ?? 0);
+        $new  = trim((string)($_POST['status'] ?? ''));
+        $now  = date('Y-m-d H:i:s');
+
+        if (!in_array($new, $this->statusOptions(), true)) {
+            $this->flash('danger', 'Invalid status.');
+            $this->redirect('/jobs/mine');
+        }
+
+        $pdo = DB::conn();
+        $job = $this->ownJob($pdo, $id);
+        if (!$job) {
+            $this->flash('danger', 'Not authorized.');
+            $this->redirect('/jobs/mine');
+        }
+
+        $st = $pdo->prepare("UPDATE job_postings SET status=:st, updated_at=:ua WHERE job_posting_id=:id");
+        $st->execute([':st' => $new, ':ua' => $now, ':id' => $id]);
+
+        $this->flash('success', 'Status updated.');
+        $this->redirect('/jobs/mine');
+    }
+
+    /** POST /jobs/{id}/delete — soft delete (status = Deleted) */
+    public function destroy(array $params = []): void
+    {
+        Auth::requireAny(['Employer', 'Recruiter']);
+        if (!$this->csrfOk()) {
+            $this->flash('danger', 'Invalid session.');
+            $this->redirect('/jobs/mine');
+        }
+
+        $id  = (int)($params['id'] ?? 0);
+        $pdo = DB::conn();
+        $job = $this->ownJob($pdo, $id);
+        if (!$job) {
+            $this->flash('danger', 'Not authorized.');
+            $this->redirect('/jobs/mine');
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $pdo->prepare("UPDATE job_postings SET status='Deleted', updated_at=:ua WHERE job_posting_id=:id")
+            ->execute([':ua' => $now, ':id' => $id]);
+
+        $this->flash('success', 'Job deleted.');
+        $this->redirect('/jobs/mine');
+    }
+
+    /** Returns allowed statuses. */
+    private function statusOptions(): array
+    {
+        return ['Open', 'Paused', 'Suspended', 'Fulfilled', 'Closed', 'Deleted'];
+    }
+
+    /** Verify current user owns job (Employer: company_id==me; Recruiter: recruiter_id==me). */
+    private function ownJob(PDO $pdo, int $jobId): ?array
+    {
+        if ($jobId <= 0) return null;
+
+        $role = $_SESSION['user']['role'] ?? '';
+        $uid  = (int)($_SESSION['user']['id'] ?? 0);
+
+        $st = $pdo->prepare("
+          SELECT jp.*, e.company_name
+          FROM job_postings jp
+          JOIN employers e ON e.employer_id = jp.company_id
+          WHERE jp.job_posting_id = :id
+          LIMIT 1
+        ");
+        $st->execute([':id' => $jobId]);
+        $job = $st->fetch();
+        if (!$job) return null;
+
+        if ($role === 'Employer'  && (int)$job['company_id']   === $uid) return $job;
+        if ($role === 'Recruiter' && (int)($job['recruiter_id'] ?? 0) === $uid) return $job;
+
+        return null;
     }
 }

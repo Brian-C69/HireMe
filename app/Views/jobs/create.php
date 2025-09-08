@@ -4,6 +4,8 @@ $errors = $errors ?? [];
 $old    = $old ?? [];
 $val = fn($k, $d = '') => htmlspecialchars($old[$k] ?? $d);
 $cls = fn($k) => isset($errors[$k]) ? 'is-invalid' : '';
+$qbank  = $qbank ?? []; // from controller
+$chosen = array_map('intval', (array)($old['mi_questions'] ?? []));
 ?>
 <section class="py-5">
     <div class="container" style="max-width: 820px;">
@@ -48,6 +50,44 @@ $cls = fn($k) => isset($errors[$k]) ? 'is-invalid' : '';
                             <?php if (isset($errors['job_description'])): ?><div class="invalid-feedback"><?= htmlspecialchars($errors['job_description']) ?></div><?php endif; ?>
                         </div>
                     </div>
+
+                    <!-- Micro Interview -->
+                    <div class="card mt-3">
+                        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                            <span>Micro Interview — pick exactly 3</span>
+                            <span class="small text-muted">Choose 3</span>
+                        </div>
+                        <div class="card-body">
+                            <?php if (isset($errors['mi_questions'])): ?>
+                                <div class="alert alert-danger py-2 small mb-3"><?= htmlspecialchars($errors['mi_questions']) ?></div>
+                            <?php endif; ?>
+                            <div class="row g-2">
+                                <?php foreach ($qbank as $q): ?>
+                                    <?php $id = (int)$q['id'];
+                                    $checked = in_array($id, $chosen, true) ? 'checked' : ''; ?>
+                                    <div class="col-md-6">
+                                        <label class="border rounded p-2 w-100">
+                                            <input type="checkbox" class="form-check-input me-2 mi-check" name="mi_questions[]" value="<?= $id ?>" <?= $checked ?>>
+                                            <span><?= htmlspecialchars($q['prompt']) ?></span>
+                                        </label>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <div class="small text-muted mt-2">Tip: the candidate must answer these 3 during application.</div>
+                        </div>
+                    </div>
+
+                    <script>
+                        // limit to exactly 3 selections
+                        document.addEventListener('change', function(e) {
+                            if (!e.target.matches('.mi-check')) return;
+                            const checks = Array.from(document.querySelectorAll('.mi-check'));
+                            const picked = checks.filter(c => c.checked);
+                            if (picked.length > 3) {
+                                e.target.checked = false;
+                            }
+                        });
+                    </script>
 
                     <div class="d-flex gap-2 mt-4">
                         <button class="btn btn-primary" type="submit">Publish Job</button>

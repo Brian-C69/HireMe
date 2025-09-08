@@ -40,4 +40,19 @@ $langs  = trim((string)($job['job_languages'] ?? ''));
             </div>
         </div>
     </div>
+    <?php if (!empty($questions)): ?>
+        <div class="card mt-3">
+            <div class="card-header fw-semibold">Micro Interview (3 questions)</div>
+            <ul class="list-group list-group-flush">
+                <?php foreach ($questions as $q): ?>
+                    <li class="list-group-item"><?= htmlspecialchars($q['prompt']) ?></li>
+                <?php endforeach; ?>
+            </ul>
+            <div class="card-body small text-muted">
+                You’ll need to answer these to apply.
+                <a class="btn btn-sm btn-primary float-end" href="<?= $base ?>/jobs/<?= (int)$job['job_posting_id'] ?>/apply">Apply Now</a>
+            </div>
+        </div>
+    <?php endif; ?>
+
 </section>
