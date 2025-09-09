@@ -1,5 +1,9 @@
 <?php
 
+/** File: app/Controllers/ApplicationController.php */
+
+declare(strict_types=1);
+
 namespace App\Controllers;
 
 use App\Core\Auth;
@@ -8,6 +12,7 @@ use PDO;
 
 final class ApplicationController
 {
+    /* ---------- small helpers ---------- */
     private function flash(string $t, string $m): void
     {
         $_SESSION['flash'] = ['type' => $t, 'message' => $m];
@@ -47,6 +52,29 @@ final class ApplicationController
     {
         return isset($_POST['csrf'], $_SESSION['csrf']) && hash_equals($_SESSION['csrf'], (string)$_POST['csrf']);
     }
+    private function isWithdrawable(string $status): bool
+    {
+        return in_array($status, ['Applied', 'Reviewed'], true);
+    }
+
+    /** WHY: central audit logger */
+    private function logHistory(PDO $pdo, int $applicationId, ?string $old, string $new, string $byType, ?int $byId, ?string $note = null): void
+    {
+        $ins = $pdo->prepare("
+          INSERT INTO application_status_history
+            (application_id, old_status, new_status, changed_by_type, changed_by_id, note, created_at)
+          VALUES (:aid,:old,:new,:typ,:uid,:note,:ts)
+        ");
+        $ins->execute([
+            ':aid' => $applicationId,
+            ':old' => $old,
+            ':new' => $new,
+            ':typ' => $byType,
+            ':uid' => $byId,
+            ':note' => $note,
+            ':ts' => date('Y-m-d H:i:s'),
+        ]);
+    }
 
     /** GET /applications/create?job=ID or /jobs/{id}/apply */
     public function create(array $params = []): void
@@ -60,105 +88,131 @@ final class ApplicationController
         }
 
         $pdo = DB::conn();
-        $job = $pdo->prepare("
-    SELECT jp.*, e.company_name, e.company_logo
-    FROM job_postings jp
-    JOIN employers e ON e.employer_id = jp.company_id
-    WHERE jp.job_posting_id = :id AND jp.status='Open' LIMIT 1
-    ");
-        $job->execute([':id' => $jobId]);
-        $job = $job->fetch();
+        $st = $pdo->prepare("
+          SELECT jp.*, e.company_name, e.company_logo
+          FROM job_postings jp
+          JOIN employers e ON e.employer_id = jp.company_id
+          WHERE jp.job_posting_id = :id AND jp.status='Open' LIMIT 1
+        ");
+        $st->execute([':id' => $jobId]);
+        $job = $st->fetch();
         if (!$job) {
             $this->flash('danger', 'Job not found.');
             $this->redirect('/jobs');
         }
 
         $qs = $pdo->prepare("
-    SELECT mq.id, mq.prompt
-    FROM job_micro_questions jmq
-    JOIN micro_questions mq ON mq.id = jmq.question_id
-    WHERE jmq.job_posting_id = :id
-    ORDER BY mq.id ASC
-    ");
+          SELECT mq.id, mq.prompt
+          FROM job_micro_questions jmq
+          JOIN micro_questions mq ON mq.id = jmq.question_id
+          WHERE jmq.job_posting_id = :id
+          ORDER BY mq.id ASC
+        ");
         $qs->execute([':id' => $jobId]);
         $questions = $qs->fetchAll() ?: [];
 
-        $root = dirname(__DIR__, 2);
-        $title = 'Apply — ' . $job['job_title'];
+        $root   = dirname(__DIR__, 2);
+        $title  = 'Apply — ' . $job['job_title'];
         $viewFile = $root . '/app/Views/applications/create.php';
         $errors = $this->takeErrors();
-        $old = $this->takeOld();
-        $csrf = $this->csrf();
-
+        $old    = $this->takeOld();
+        $csrf   = $this->csrf();
         require $root . '/app/Views/layout.php';
     }
 
-    /** POST /applications */
+    /** POST /applications (apply; supports re-apply ONLY after Withdrawn) */
     public function store(array $params = []): void
     {
-        \App\Core\Auth::requireRole('Candidate');
+        Auth::requireRole('Candidate');
         if (!$this->csrfOk()) {
             $this->flash('danger', 'Invalid session.');
             $this->redirect('/jobs');
         }
 
-        $jobId = (int)($_POST['job_id'] ?? 0);
         $pdo   = DB::conn();
         $cid   = (int)($_SESSION['user']['id'] ?? 0);
+        $jobId = (int)($_POST['job_id'] ?? 0);
 
-        // Duplicate check (block repeat)
-        $du = $pdo->prepare("SELECT applicant_id, application_status, application_date
-                         FROM applications WHERE candidate_id=:cid AND job_posting_id=:jid LIMIT 1");
-        $du->execute([':cid' => $cid, ':jid' => $jobId]);
-        if ($du->fetch()) {
-            $this->flash('info', 'You have already applied to this job.');
-            $this->redirect('/jobs/' . $jobId);
-        }
-
-        // Load 3 questions
-        $qrows = $pdo->prepare("
-      SELECT mq.id, mq.prompt
-      FROM job_micro_questions jmq
-      JOIN micro_questions mq ON mq.id = jmq.question_id
-      WHERE jmq.job_posting_id = :id
-      ORDER BY mq.id ASC
-    ");
-        $qrows->execute([':id' => $jobId]);
-        $qrows = $qrows->fetchAll() ?: [];
+        // Load questions
+        $qst = $pdo->prepare("
+          SELECT mq.id, mq.prompt
+          FROM job_micro_questions jmq
+          JOIN micro_questions mq ON mq.id = jmq.question_id
+          WHERE jmq.job_posting_id = :jid
+          ORDER BY mq.id ASC
+        ");
+        $qst->execute([':jid' => $jobId]);
+        $qrows = $qst->fetchAll() ?: [];
 
         // Validate answers
         $answers = [];
-        foreach ($qrows as $q) {
-            $key = 'answer_' . $q['id'];
-            $txt = trim((string)($_POST[$key] ?? ''));
-            $answers[] = ['qid' => (int)$q['id'], 'text' => $txt];
-        }
         $errors = [];
-        foreach ($answers as $a) {
-            if ($a['text'] === '') $errors['answer_' . $a['qid']] = 'Please provide an answer.';
-            elseif (mb_strlen($a['text']) > 1000) $errors['answer_' . $a['qid']] = 'Max 1000 characters.';
+        foreach ($qrows as $q) {
+            $qid = (int)$q['id'];
+            $txt = trim((string)($_POST['answer_' . $qid] ?? ''));
+            $answers[] = ['qid' => $qid, 'text' => $txt];
+            if ($txt === '') {
+                $errors['answer_' . $qid] = 'Please provide an answer.';
+            } elseif (mb_strlen($txt) > 1000) {
+                $errors['answer_' . $qid] = 'Max 1000 characters.';
+            }
         }
         if ($errors) {
             $_SESSION['errors'] = $errors;
             $_SESSION['old'] = $_POST;
             $_SESSION['open_apply_modal'] = true;
-            $this->flash('danger', 'Please correct the errors below.');
             $this->redirect('/jobs/' . $jobId);
         }
 
-        // Create application + answers
+        $now = date('Y-m-d H:i:s');
         $pdo->beginTransaction();
         try {
-            $now = date('Y-m-d H:i:s');
+            // Check existing application
+            $find = $pdo->prepare("
+              SELECT applicant_id, application_status
+              FROM applications
+              WHERE candidate_id = :cid AND job_posting_id = :jid
+              LIMIT 1
+            ");
+            $find->execute([':cid' => $cid, ':jid' => $jobId]);
+            $existing = $find->fetch();
 
-            $ins = $pdo->prepare("INSERT INTO applications
-          (candidate_id, job_posting_id, application_date, application_status, resume_url, cover_letter, notes, updated_at)
-          VALUES (:cid, :jid, :ad, 'Applied', NULL, NULL, NULL, :ua)");
-            $ins->execute([':cid' => $cid, ':jid' => $jobId, ':ad' => $now, ':ua' => $now]);
+            $reapplied = false;
+            if ($existing && (string)$existing['application_status'] !== 'Withdrawn') {
+                $pdo->rollBack();
+                $this->flash('warning', 'You have already applied to this job.');
+                $this->redirect('/jobs/' . $jobId);
+            }
 
-            $appId = (int)$pdo->lastInsertId();
+            if (!$existing) {
+                // New application
+                $ins = $pdo->prepare("
+                  INSERT INTO applications
+                    (candidate_id, job_posting_id, application_date, application_status, resume_url, cover_letter, notes, updated_at)
+                  VALUES (:cid,:jid,:ad,'Applied',NULL,NULL,NULL,:ua)
+                ");
+                $ins->execute([':cid' => $cid, ':jid' => $jobId, ':ad' => $now, ':ua' => $now]);
+                $appId = (int)$pdo->lastInsertId();
+
+                // History: NULL -> Applied
+                $this->logHistory($pdo, $appId, null, 'Applied', 'Candidate', $cid, null);
+            } else {
+                // Re-apply from Withdrawn
+                $appId = (int)$existing['applicant_id'];
+                $oldStatus = (string)$existing['application_status']; // Withdrawn
+                $pdo->prepare("UPDATE applications SET application_status='Applied', application_date=:d, updated_at=:u WHERE applicant_id=:id")
+                    ->execute([':d' => $now, ':u' => $now, ':id' => $appId]);
+                $pdo->prepare("DELETE FROM application_answers WHERE application_id=:id")
+                    ->execute([':id' => $appId]);
+
+                // History: Withdrawn -> Applied
+                $this->logHistory($pdo, $appId, $oldStatus, 'Applied', 'Candidate', $cid, 'Re-applied after Withdrawn');
+                $reapplied = true;
+            }
+
+            // Answers
             $ans = $pdo->prepare("INSERT INTO application_answers (application_id, question_id, answer_text, created_at)
-                              VALUES (:aid,:qid,:txt,:ts)");
+                                VALUES (:aid,:qid,:txt,:ts)");
             foreach ($answers as $a) {
                 $ans->execute([':aid' => $appId, ':qid' => $a['qid'], ':txt' => $a['text'], ':ts' => $now]);
             }
@@ -170,14 +224,9 @@ final class ApplicationController
             $this->redirect('/jobs/' . $jobId);
         }
 
-        $this->flash('success', 'Application submitted.');
+        unset($_SESSION['open_apply_modal']);  // prevent modal from reopening
+        $this->flash('success', $reapplied ? 'Re-applied successfully.' : 'Application submitted.');
         $this->redirect('/jobs/' . $jobId);
-    }
-
-    /** helper: statuses that can be withdrawn by candidate */
-    private function isWithdrawable(string $status): bool
-    {
-        return in_array($status, ['Applied', 'Reviewed'], true);
     }
 
     /** POST /applications/{id}/withdraw */
@@ -190,27 +239,28 @@ final class ApplicationController
         }
 
         $appId = (int)($params['id'] ?? 0);
-        $cid   = (int)($_SESSION['user']['id'] ?? 0);
+        $cid  = (int)($_SESSION['user']['id'] ?? 0);
         if ($appId <= 0 || $cid <= 0) {
             $this->flash('danger', 'Invalid request.');
             $this->redirect('/applications');
         }
 
         $pdo = DB::conn();
-        $st  = $pdo->prepare("
-            SELECT a.applicant_id, a.application_status, a.job_posting_id
-            FROM applications a
-            WHERE a.applicant_id = :id AND a.candidate_id = :cid
-            LIMIT 1
+        $st = $pdo->prepare("
+          SELECT a.applicant_id, a.application_status, a.job_posting_id
+          FROM applications a
+          WHERE a.applicant_id = :id AND a.candidate_id = :cid
+          LIMIT 1
         ");
         $st->execute([':id' => $appId, ':cid' => $cid]);
         $app = $st->fetch();
-
         if (!$app) {
             $this->flash('danger', 'Application not found.');
             $this->redirect('/applications');
         }
-        if (!$this->isWithdrawable((string)$app['application_status'])) {
+
+        $old = (string)$app['application_status'];
+        if (!$this->isWithdrawable($old)) {
             $this->flash('warning', 'This application cannot be withdrawn.');
             $this->redirect('/applications');
         }
@@ -218,8 +268,10 @@ final class ApplicationController
         $pdo->prepare("UPDATE applications SET application_status='Withdrawn', updated_at=:u WHERE applicant_id=:id")
             ->execute([':u' => date('Y-m-d H:i:s'), ':id' => $appId]);
 
+        // History: Applied/Reviewed -> Withdrawn
+        $this->logHistory($pdo, (int)$app['applicant_id'], $old, 'Withdrawn', 'Candidate', $cid, null);
+
         $this->flash('success', 'Application withdrawn.');
-        // Prefer to return to the job page; fallback to list
         $jid = (int)$app['job_posting_id'];
         $this->redirect($jid ? '/jobs/' . $jid : '/applications');
     }
@@ -228,20 +280,19 @@ final class ApplicationController
     public function index(array $params = []): void
     {
         Auth::requireRole('Candidate');
+        if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 
         $pdo = DB::conn();
         $cid = (int)($_SESSION['user']['id'] ?? 0);
 
-        // Filters
-        $status  = trim((string)($_GET['status'] ?? ''));
-        $q       = trim((string)($_GET['q'] ?? ''));
-        $perPage = max(1, min(50, (int)($_GET['per'] ?? 10)));
-        $page    = max(1, (int)($_GET['page'] ?? 1));
-        $offset  = ($page - 1) * $perPage;
+        $status = trim((string)($_GET['status'] ?? ''));
+        $q      = trim((string)($_GET['q'] ?? ''));
+        $per    = max(1, min(50, (int)($_GET['per'] ?? 10)));
+        $page   = max(1, (int)($_GET['page'] ?? 1));
+        $off    = ($page - 1) * $per;
 
         $where = ['a.candidate_id = :cid'];
-        $bind  = [':cid' => $cid];
-
+        $bind = [':cid' => $cid];
         if ($status !== '') {
             $where[] = 'a.application_status = :st';
             $bind[':st'] = $status;
@@ -250,22 +301,13 @@ final class ApplicationController
             $where[] = '(jp.job_title LIKE :q OR e.company_name LIKE :q)';
             $bind[':q'] = "%$q%";
         }
+        $whereSql = 'WHERE ' . implode(' AND ', $where);
 
-        $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+        $c = $pdo->prepare("SELECT COUNT(*) FROM applications a JOIN job_postings jp ON jp.job_posting_id=a.job_posting_id JOIN employers e ON e.employer_id=jp.company_id $whereSql");
+        $c->execute($bind);
+        $total = (int)$c->fetchColumn();
 
-        // Count
-        $sqlCount = "
-          SELECT COUNT(*) FROM applications a
-          JOIN job_postings jp ON jp.job_posting_id = a.job_posting_id
-          JOIN employers e     ON e.employer_id     = jp.company_id
-          $whereSql
-        ";
-        $st = $pdo->prepare($sqlCount);
-        $st->execute($bind);
-        $total = (int)$st->fetchColumn();
-
-        // Page data
-        $sql = "
+        $p = $pdo->prepare("
           SELECT a.applicant_id, a.application_status, a.application_date,
                  jp.job_posting_id, jp.job_title, jp.job_location, jp.employment_type,
                  e.company_name, e.company_logo
@@ -275,23 +317,20 @@ final class ApplicationController
           $whereSql
           ORDER BY a.application_date DESC, a.applicant_id DESC
           LIMIT :lim OFFSET :off
-        ";
-        $st = $pdo->prepare($sql);
-        foreach ($bind as $k => $v) {
-            $st->bindValue($k, $v);
-        }
-        $st->bindValue(':lim', $perPage, PDO::PARAM_INT);
-        $st->bindValue(':off', $offset,  PDO::PARAM_INT);
-        $st->execute();
-        $applications = $st->fetchAll() ?: [];
+        ");
+        foreach ($bind as $k => $v) $p->bindValue($k, $v);
+        $p->bindValue(':lim', $per, PDO::PARAM_INT);
+        $p->bindValue(':off', $off, PDO::PARAM_INT);
+        $p->execute();
+        $applications = $p->fetchAll() ?: [];
 
-        $pages = max(1, (int)ceil($total / $perPage));
+        $pages = max(1, (int)ceil($total / $per));
         if ($page > $pages) $page = $pages;
 
         $root    = dirname(__DIR__, 2);
         $title   = 'My Applications — HireMe';
         $viewFile = $root . '/app/Views/applications/index.php';
-        $filters = ['status' => $status, 'q' => $q, 'per' => $perPage, 'page' => $page, 'total' => $total];
+        $filters = ['status' => $status, 'q' => $q, 'per' => $per, 'page' => $page, 'total' => $total];
         require $root . '/app/Views/layout.php';
     }
 }

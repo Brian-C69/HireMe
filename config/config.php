@@ -14,7 +14,7 @@ return [
         'port'       => 587,
         'username'   => 'choongyunxian@ga2wellness.com',
         'password'   => '+60123095550',
-        'secure'     => 'tls',                 // 'tls' or 'ssl'
+        'secure'     => 'tls',
         'from_email' => 'choongyunxian@ga2wellness.com',
         'from_name'  => 'HireMe Admin',
     ],

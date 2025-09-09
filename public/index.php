@@ -86,6 +86,8 @@ $router->get('/jobs/{id}/apply',      [ApplicationController::class, 'create']);
 $router->get('/applications/create',  [ApplicationController::class, 'create']); // legacy with ?job=
 $router->post('/applications',        [ApplicationController::class, 'store']);
 
+$router->post('/applications/{id}/withdraw', [ApplicationController::class, 'withdraw']);
+
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 $uriPath = str_replace('\\', '/', parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/');
@@ -95,11 +97,3 @@ $path    = rtrim($path, '/') ?: '/';
 if ($path === '/index.php') $path = '/';
 
 $router->dispatch($method, $path);
-
-// Polyfill for PHP < 8.0 (remove if not needed)
-if (!function_exists('str_starts_with')) {
-    function str_starts_with(string $haystack, string $needle): bool
-    {
-        return $needle !== '' && strpos($haystack, $needle) === 0 || ($needle === '' && true);
-    }
-}

@@ -8,8 +8,10 @@ $langs  = trim((string)($job['job_languages'] ?? ''));
 $errors = $errors ?? [];
 $old    = $old ?? [];
 $openApplyModal = $openApplyModal ?? false;
-$role = $_SESSION['user']['role'] ?? null;
-$myApp = $myApp ?? null;
+$role = $_SESSION['user']['role'] ?? '';
+$myApp = $myApp ?? null; // from controller
+$canWithdraw = $myApp && in_array((string)($myApp['application_status'] ?? ''), ['Applied', 'Reviewed'], true);
+$isWithdrawn = $myApp && (string)($myApp['application_status'] ?? '') === 'Withdrawn';
 
 $badgeClass = function (string $s): string {
     $map = ['Applied' => 'primary', 'Reviewed' => 'secondary', 'Interview' => 'info', 'Hired' => 'success', 'Rejected' => 'danger'];
@@ -32,28 +34,31 @@ $badgeClass = function (string $s): string {
                     <strong>Salary</strong><br><span class="text-muted">(<?= htmlspecialchars($salary) ?>)</span>
                 </div>
 
-                <?php if (($role === 'Candidate') && $myApp): ?>
+                <?php if ($role === 'Candidate' && $myApp): ?>
                     <div class="border rounded px-3 py-2 mt-3 text-center">
-                        <div class="<?= $badgeClass($myApp['application_status'] ?? 'Applied') ?>">
+                        <span class="badge text-bg-<?= $isWithdrawn ? 'warning' : 'secondary' ?>">
                             <?= htmlspecialchars($myApp['application_status'] ?? 'Applied') ?>
-                        </div>
-                        <div class="small text-muted mt-1">
-                            Applied on <?= htmlspecialchars(date('d/m/Y', strtotime((string)($myApp['application_date'] ?? 'now')))) ?>
-                        </div>
+                        </span>
+                        <?php if (!empty($myApp['application_date'])): ?>
+                            <div class="small text-muted mt-1">
+                                Applied on <?= htmlspecialchars(date('d/m/Y', strtotime((string)$myApp['application_date']))) ?>
+                            </div>
+                        <?php endif; ?>
                     </div>
 
-                    <?php $withdrawable = in_array((string)($myApp['application_status'] ?? ''), ['Applied', 'Reviewed'], true); ?>
-                    <?php if ($withdrawable): ?>
+                    <?php if ($canWithdraw): ?>
                         <form action="<?= $base ?>/applications/<?= (int)$myApp['applicant_id'] ?>/withdraw" method="post" class="mt-3" onsubmit="return confirm('Withdraw this application?');">
                             <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
                             <button class="btn btn-outline-danger w-100" type="submit">Withdraw Application</button>
                         </form>
+                    <?php elseif ($isWithdrawn): ?>
+                        <!-- Re-Apply opens the same modal -->
+                        <button class="btn btn-primary w-100 mt-3" type="button" data-bs-toggle="modal" data-bs-target="#applyModal">Re-Apply</button>
                     <?php else: ?>
                         <button class="btn btn-secondary w-100 mt-3" type="button" disabled>Applied</button>
                     <?php endif; ?>
 
                 <?php else: ?>
-                    <!-- original Apply button or modal trigger -->
                     <button class="btn btn-primary w-100 mt-3" type="button" data-bs-toggle="modal" data-bs-target="#applyModal">Apply Job</button>
                 <?php endif; ?>
             </div>
@@ -84,7 +89,7 @@ $badgeClass = function (string $s): string {
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
 
-                <?php if ($role === 'Candidate' && !$myApp): ?>
+                <?php if ($role === 'Candidate' && (!$myApp || $isWithdrawn)): ?>
                     <form action="<?= $base ?>/applications" method="post" novalidate>
                         <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
                         <input type="hidden" name="job_id" value="<?= (int)$job['job_posting_id'] ?>">

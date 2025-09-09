@@ -240,7 +240,12 @@ final class JobController
         $appliedIds = [];
         if (($_SESSION['user']['role'] ?? '') === 'Candidate') {
             $cid = (int)($_SESSION['user']['id'] ?? 0);
-            $qApplied = $pdo->prepare("SELECT job_posting_id FROM applications WHERE candidate_id = :cid");
+            $qApplied = $pdo->prepare("
+        SELECT job_posting_id
+        FROM applications
+        WHERE candidate_id = :cid
+          AND application_status <> 'Withdrawn'
+    ");
             $qApplied->execute([':cid' => $cid]);
             $appliedIds = array_map('intval', array_column($qApplied->fetchAll() ?: [], 'job_posting_id'));
         }
