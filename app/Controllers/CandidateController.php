@@ -41,6 +41,15 @@ final class CandidateController
         header('Location: ' . $base . $path, true, 302);
         exit;
     }
+    private function csrf(): string
+    {
+        if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
+        return $_SESSION['csrf'];
+    }
+    private function csrfOk(): bool
+    {
+        return isset($_POST['csrf'], $_SESSION['csrf']) && hash_equals($_SESSION['csrf'], (string)$_POST['csrf']);
+    }
 
     public function edit(array $params = []): void
     {
