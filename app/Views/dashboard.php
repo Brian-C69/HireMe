@@ -41,7 +41,7 @@ $base = defined('BASE_URL') ? BASE_URL : '';
                         <div class="card-body">
                             <h5 class="card-title">Verify & Premium Badge</h5>
                             <p class="card-text text-muted">Boost trust and visibility (RM50 badge).</p>
-                            <a class="btn btn-outline-secondary" href="<?= $base ?>/account/verify">Get Verified</a>
+                            <a class="btn btn-outline-secondary" href="<?= $base ?>/verify">Get Verified</a>
                         </div>
                     </div>
                 </div>

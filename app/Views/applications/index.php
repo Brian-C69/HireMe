@@ -6,22 +6,37 @@ $page   = (int)($f['page'] ?? 1);
 $per    = (int)($f['per'] ?? 10);
 $total  = (int)($f['total'] ?? 0);
 $pages  = max(1, (int)ceil($total / max(1, $per)));
+
 $qs = function (array $o = []) use ($f) {
     $q = array_filter(array_merge($f, $o), fn($v) => $v !== '' && $v !== null);
     if (($q['page'] ?? 1) == 1) unset($q['page']);
     return http_build_query($q);
 };
+
 $badge = function (string $s): string {
-    $map = ['Applied' => 'primary', 'Reviewed' => 'secondary', 'Interview' => 'info', 'Hired' => 'success', 'Rejected' => 'danger'];
+    $map = [
+        'Applied'   => 'primary',
+        'Reviewed'  => 'secondary',
+        'Interview' => 'info',
+        'Hired'     => 'success',
+        'Rejected'  => 'danger',
+        'Withdrawn' => 'warning',
+    ];
     return 'badge text-bg-' . ($map[$s] ?? 'light');
 };
+
+$withdrawable = fn(string $s): bool => in_array($s, ['Applied', 'Reviewed'], true);
+$reapplicable = fn(string $s): bool => $s === 'Withdrawn';
 ?>
 <section class="py-4">
     <div class="container">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h1 class="h4 mb-0">My Applications</h1>
             <?php if ($total): ?>
-                <div class="text-muted small">Showing <?= number_format(min(($page - 1) * $per + 1, $total)) ?>–<?= number_format(min($page * $per, $total)) ?> of <?= number_format($total) ?></div>
+                <div class="text-muted small">
+                    Showing <?= number_format(min(($page - 1) * $per + 1, $total)) ?>–<?= number_format(min($page * $per, $total)) ?>
+                    of <?= number_format($total) ?>
+                </div>
             <?php endif; ?>
         </div>
 
@@ -31,7 +46,7 @@ $badge = function (string $s): string {
                     <div class="col-md-3">
                         <label class="form-label">Status</label>
                         <?php $sel = $f['status'] ?? '';
-                        $opts = ['', 'Applied', 'Reviewed', 'Interview', 'Hired', 'Rejected']; ?>
+                        $opts = ['', 'Applied', 'Reviewed', 'Interview', 'Hired', 'Rejected', 'Withdrawn']; ?>
                         <select name="status" class="form-select">
                             <?php foreach ($opts as $o): ?>
                                 <option value="<?= $o ?>" <?= $sel === $o ? 'selected' : '' ?>><?= $o ?: 'Any' ?></option>
@@ -64,6 +79,7 @@ $badge = function (string $s): string {
         <?php else: ?>
             <div class="vstack gap-3">
                 <?php foreach ($apps as $a):
+                    $appId = (int)$a['applicant_id'];
                     $jid   = (int)$a['job_posting_id'];
                     $title = htmlspecialchars((string)$a['job_title']);
                     $comp  = htmlspecialchars((string)$a['company_name']);
@@ -75,9 +91,11 @@ $badge = function (string $s): string {
                 ?>
                     <div class="card">
                         <div class="card-body d-flex">
-                            <div class="border bg-light d-flex align-items-center justify-content-center rounded me-3" style="width:64px;height:64px;">
+                            <div class="border bg-light d-flex align-items-center justify-content-center rounded me-3"
+                                style="width:64px;height:64px;">
                                 <?php if ($logo): ?>
-                                    <img src="<?= $base . '/' . ltrim($logo, '/') ?>" alt="Logo" style="max-width:100%;max-height:100%;object-fit:contain;">
+                                    <img src="<?= $base . '/' . ltrim($logo, '/') ?>" alt="Logo"
+                                        style="max-width:100%;max-height:100%;object-fit:contain;">
                                 <?php else: ?>
                                     <span class="text-muted small">Logo</span>
                                 <?php endif; ?>
@@ -95,13 +113,20 @@ $badge = function (string $s): string {
                                 <div class="text-muted small mt-1">Applied on <?= htmlspecialchars($date) ?></div>
                             </div>
                         </div>
-                        <div class="card-footer d-flex justify-content-end">
+                        <div class="card-footer d-flex justify-content-end gap-2">
                             <a class="btn btn-sm btn-outline-primary" href="<?= $base ?>/jobs/<?= $jid ?>">View Job</a>
+
                             <?php if ($withdrawable($stat)): ?>
-                                <form action="<?= $base ?>/applications/<?= $appId ?>/withdraw" method="post" onsubmit="return confirm('Withdraw this application? This cannot be undone.');" class="d-inline">
+                                <form action="<?= $base ?>/applications/<?= $appId ?>/withdraw"
+                                    method="post"
+                                    onsubmit="return confirm('Withdraw this application? This cannot be undone.');"
+                                    class="d-inline">
                                     <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
                                     <button class="btn btn-sm btn-outline-danger" type="submit">Withdraw</button>
                                 </form>
+                            <?php elseif ($reapplicable($stat)): ?>
+                                <!-- Jump to job page and open apply modal -->
+                                <a class="btn btn-sm btn-primary" href="<?= $base ?>/jobs/<?= $jid ?>?open=apply">Re-Apply</a>
                             <?php endif; ?>
                         </div>
                     </div>
@@ -113,17 +138,28 @@ $badge = function (string $s): string {
                     <ul class="pagination justify-content-center">
                         <?php $prev = max(1, $page - 1);
                         $next = min($pages, $page + 1); ?>
-                        <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>"><a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => 1]) ?>">First</a></li>
-                        <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>"><a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $prev]) ?>">Prev</a></li>
-                        <?php $start = max(1, $page - 2);
-                        $end = min($pages, $page + 2);
-                        if ($start > 1): ?><li class="page-item disabled"><span class="page-link">…</span></li><?php endif;
-                                                                                                            for ($i = $start; $i <= $end; $i++): ?>
-                            <li class="page-item <?= $i === $page ? 'active' : '' ?>"><a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $i]) ?>"><?= $i ?></a></li>
+                        <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
+                            <a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => 1]) ?>">First</a>
+                        </li>
+                        <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
+                            <a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $prev]) ?>">Prev</a>
+                        </li>
+                        <?php
+                        $start = max(1, $page - 2);
+                        $end   = min($pages, $page + 2);
+                        if ($start > 1) echo '<li class="page-item disabled"><span class="page-link">…</span></li>';
+                        for ($i = $start; $i <= $end; $i++): ?>
+                            <li class="page-item <?= $i === $page ? 'active' : '' ?>">
+                                <a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $i]) ?>"><?= $i ?></a>
+                            </li>
                         <?php endfor;
-                                                                                                            if ($end < $pages): ?><li class="page-item disabled"><span class="page-link">…</span></li><?php endif; ?>
-                        <li class="page-item <?= $page >= $pages ? 'disabled' : '' ?>"><a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $next]) ?>">Next</a></li>
-                        <li class="page-item <?= $page >= $pages ? 'disabled' : '' ?>"><a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $pages]) ?>">Last</a></li>
+                        if ($end < $pages) echo '<li class="page-item disabled"><span class="page-link">…</span></li>'; ?>
+                        <li class="page-item <?= $page >= $pages ? 'disabled' : '' ?>">
+                            <a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $next]) ?>">Next</a>
+                        </li>
+                        <li class="page-item <?= $page >= $pages ? 'disabled' : '' ?>">
+                            <a class="page-link" href="<?= $base ?>/applications?<?= $qs(['page' => $pages]) ?>">Last</a>
+                        </li>
                     </ul>
                 </nav>
             <?php endif; ?>

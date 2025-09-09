@@ -30,6 +30,7 @@ use App\Controllers\CandidateController;
 use App\Controllers\ResumeController;
 use App\Controllers\EmployerController;
 use App\Controllers\ApplicationController;
+use App\Controllers\PaymentController;
 
 $router = new Router();
 
@@ -87,6 +88,14 @@ $router->get('/applications/create',  [ApplicationController::class, 'create']);
 $router->post('/applications',        [ApplicationController::class, 'store']);
 
 $router->post('/applications/{id}/withdraw', [ApplicationController::class, 'withdraw']);
+
+// KYC (Candidate)
+$router->get('/verify', [CandidateController::class, 'verifyForm']);
+$router->post('/verify', [CandidateController::class, 'submitVerification']);
+
+// Premium badge (Candidate)
+$router->get('/premium',     [PaymentController::class, 'showPremium']);
+$router->post('/premium/pay', [PaymentController::class, 'payPremium']);
 
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');

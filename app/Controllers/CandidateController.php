@@ -256,4 +256,92 @@ final class CandidateController
         $this->flash('success', 'Profile updated.');
         $this->redirect('/account');
     }
+
+    /** GET /verify */
+    public function verifyForm(array $params = []): void
+    {
+        Auth::requireRole('Candidate');
+
+        $pdo = DB::conn();
+        $id  = (int)($_SESSION['user']['id'] ?? 0);
+        $st  = $pdo->prepare("SELECT candidate_id, full_name, verified_status, verification_date, verification_doc_type, verification_doc_url, premium_badge FROM candidates WHERE candidate_id=:id LIMIT 1");
+        $st->execute([':id' => $id]);
+        $me  = $st->fetch() ?: [];
+
+        $root   = dirname(__DIR__, 2);
+        $title  = 'Verify Account — HireMe';
+        $viewFile = $root . '/app/Views/candidate/verify.php';
+        $errors = $this->takeErrors();
+        $csrf   = $this->csrf();
+        require $root . '/app/Views/layout.php';
+    }
+
+    /** POST /verify */
+    public function submitVerification(array $params = []): void
+    {
+        Auth::requireRole('Candidate');
+        if (!$this->csrfOk()) {
+            $this->flash('danger', 'Invalid session.');
+            $this->redirect('/verify');
+        }
+
+        $pdo = DB::conn();
+        $id  = (int)($_SESSION['user']['id'] ?? 0);
+
+        // Basic input
+        $docType = trim((string)($_POST['verification_doc_type'] ?? ''));
+        $allowedTypes = ['IC', 'Passport', 'Driver\'s License'];
+        $errors = [];
+        if (!in_array($docType, $allowedTypes, true)) $errors['verification_doc_type'] = 'Select a valid document type.';
+
+        // Upload
+        $url = null;
+        if (!empty($_FILES['verification_doc']['name'])) {
+            $up = $_FILES['verification_doc'];
+            if ($up['error'] !== UPLOAD_ERR_OK) {
+                $errors['verification_doc'] = 'Upload error.';
+            } else {
+                $mime = mime_content_type($up['tmp_name']) ?: '';
+                $ok   = [
+                    'image/jpeg' => 'jpg',
+                    'image/png'  => 'png',
+                    'application/pdf' => 'pdf'
+                ];
+                if (!isset($ok[$mime])) {
+                    $errors['verification_doc'] = 'Only JPG/PNG/PDF are allowed.';
+                } elseif ($up['size'] > 5 * 1024 * 1024) {
+                    $errors['verification_doc'] = 'Max 5MB.';
+                } else {
+                    $root = dirname(__DIR__, 2);
+                    $dir  = $root . '/public/assets/uploads/kyc';
+                    if (!is_dir($dir)) @mkdir($dir, 0777, true);
+                    $name = 'kyc_' . $id . '_' . time() . '.' . $ok[$mime];
+                    $dest = $dir . '/' . $name;
+                    if (!move_uploaded_file($up['tmp_name'], $dest)) {
+                        $errors['verification_doc'] = 'Failed to save upload.';
+                    } else {
+                        $url = '/assets/uploads/kyc/' . $name; // public URL
+                    }
+                }
+            }
+        } else {
+            $errors['verification_doc'] = 'Please upload your document.';
+        }
+
+        if ($errors) {
+            $this->setErrors($errors);
+            $this->redirect('/verify');
+        }
+
+        // Persist: mark as submitted (still not verified — admin will approve later)
+        $now = date('Y-m-d H:i:s');
+        $pdo->prepare("
+            UPDATE candidates
+            SET verification_doc_type=:t, verification_doc_url=:u, verified_status=0, verification_date=:d, updated_at=:u2
+            WHERE candidate_id=:id
+        ")->execute([':t' => $docType, ':u' => $url, ':d' => $now, ':u2' => $now, ':id' => $id]);
+
+        $this->flash('success', 'Verification submitted. We’ll review and update your status soon.');
+        $this->redirect('/verify');
+    }
 }
