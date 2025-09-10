@@ -87,9 +87,10 @@ final class AuthController
             $this->flash('danger', 'Invalid session.');
             $this->redirect('/login');
         }
+
         $email = strtolower(trim((string)($_POST['email'] ?? '')));
-        $pass = (string)($_POST['password'] ?? '');
-        $ip   = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        $pass  = (string)($_POST['password'] ?? '');
+        $ip    = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 
         $err = [];
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) $err['email'] = 'Enter a valid email.';
@@ -106,21 +107,70 @@ final class AuthController
             $this->redirect('/login');
         }
 
-        $pdo = DB::conn();
-        $user = $this->findUserByEmail($pdo, $email);
-        if (!$user || !password_verify($pass, $user['password_hash'])) {
+        $pdo  = DB::conn();
+        $user = $this->findUserByEmail($pdo, $email); // must return: id, email, password_hash, role
+        if (!$user || !password_verify($pass, (string)$user['password_hash'])) {
             $this->recordFailure($email, $ip);
             $left = max(0, self::MAX_ATTEMPTS - $this->attemptCount($email, $ip));
-            $this->setErrors(['email' => 'Invalid email or password.', 'password' => $left > 0 ? "You have {$left} attempt(s) left." : 'Limit reached. Please reset your password.']);
+            $this->setErrors([
+                'email'    => 'Invalid email or password.',
+                'password' => $left > 0 ? "You have {$left} attempt(s) left." : 'Limit reached. Please reset your password.',
+            ]);
             $this->setOld(['email' => $email]);
             $this->redirect('/login');
         }
 
+        // ---- NEW: fetch role-specific meta for the session (name/premium/verified) ----
+        $name = '';
+        $premium = 0;
+        $verified = 0;
+
+        switch ((string)$user['role']) {
+            case 'Candidate':
+                $st = $pdo->prepare("SELECT full_name, premium_badge, verified_status FROM candidates WHERE candidate_id = :id LIMIT 1");
+                $st->execute([':id' => (int)$user['id']]);
+                if ($row = $st->fetch()) {
+                    $name     = (string)($row['full_name'] ?? '');
+                    $premium  = (int)($row['premium_badge'] ?? 0);
+                    $verified = (int)($row['verified_status'] ?? 0);
+                }
+                break;
+
+            case 'Employer':
+                $st = $pdo->prepare("SELECT company_name FROM employers WHERE employer_id = :id LIMIT 1");
+                $st->execute([':id' => (int)$user['id']]);
+                if ($row = $st->fetch()) {
+                    $name = (string)($row['company_name'] ?? '');
+                }
+                break;
+
+            case 'Recruiter':
+                $st = $pdo->prepare("SELECT full_name FROM recruiters WHERE recruiter_id = :id LIMIT 1");
+                $st->execute([':id' => (int)$user['id']]);
+                if ($row = $st->fetch()) {
+                    $name = (string)($row['full_name'] ?? '');
+                }
+                break;
+        }
+
+        // Success
         $this->resetAttempts($email, $ip);
-        $_SESSION['user'] = ['id' => $user['id'], 'email' => $user['email'], 'role' => $user['role'], 'time' => time()];
+        $_SESSION['user'] = [
+            'id'              => (int)$user['id'],
+            'email'           => (string)$user['email'],
+            'role'            => (string)$user['role'],
+            'name'            => $name,
+            'premium_badge'   => $premium,   // <- used by navbar ⭐ chip
+            'verified_status' => $verified,  // <- optional "verified" chip
+            'time'            => time(),
+        ];
+        // rotate CSRF
+        $_SESSION['csrf'] = bin2hex(random_bytes(16));
+
         $this->flash('success', 'Welcome back, ' . $user['role'] . '!');
         $this->redirect('/welcome');
     }
+
 
     public function logout(array $params = []): void
     {

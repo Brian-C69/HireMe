@@ -98,6 +98,10 @@ $router->get('/premium',     [PaymentController::class, 'showPremium']);
 $router->post('/premium/pay', [PaymentController::class, 'payPremium']);
 $router->post('/premium/unset', [PaymentController::class, 'revokePremium']);
 
+$router->get('/candidates',              [CandidateController::class, 'directory']); // list
+$router->get('/candidates/{id}',         [CandidateController::class, 'view']);      // detail limited/full
+$router->post('/candidates/{id}/unlock', [CandidateController::class, 'unlock']);    // unlock action
+
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 $uriPath = str_replace('\\', '/', parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/');

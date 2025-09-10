@@ -146,6 +146,31 @@ function dateMY($d)
             line-height: 1;
             border: 1px solid #f7c948;
         }
+
+        @page {
+            margin-bottom: 60px;
+        }
+
+        /* space for footer */
+        .footer {
+            position: fixed;
+            bottom: 18px;
+            left: 24px;
+            right: 24px;
+            color: #777;
+            font-size: 11px;
+            border-top: 1px solid #e5e5e5;
+            padding-top: 6px;
+            text-align: right;
+            /* align to the right; change if you prefer left/center */
+        }
+
+        .chip-verified {
+            background: #d9f5e6;
+            /* soft green */
+            color: #0b5137;
+            border: 1px solid #bfead6;
+        }
     </style>
 </head>
 
@@ -154,8 +179,11 @@ function dateMY($d)
     <div class="grid mb-14">
         <div class="col w-70">
             <h1><?= $val('full_name', 'Candidate') ?>
-                <?php if (!empty($me['premium_badge'])): ?>
-                    <span class="chip">⭐ Premium</span>
+                <?php if (!empty($candidate['premium_badge'])): ?>
+                    <span class="chip">&#9733; Premium</span>
+                <?php endif; ?>
+                <?php if (!empty($candidate['verified_status'])): ?>
+                    <span class="chip chip-verified">&#10003; Verified</span>
                 <?php endif; ?>
             </h1>
             <div class="muted small">
@@ -250,6 +278,12 @@ function dateMY($d)
             <?php endforeach; ?>
         </div>
     <?php endif; ?>
+
+    <?php $generatedOn = date('d M Y, H:i'); // uses Asia/Kuala_Lumpur from your app 
+    ?>
+    <div class="footer">
+        Generated on <?= htmlspecialchars($generatedOn) ?> • HireMe
+    </div>
 </body>
 
 </html>

@@ -108,7 +108,7 @@ final class PaymentController
     {
         // Allow on localhost or when APP_DEBUG is true (optional constant from config)
         $local = in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true);
-        return $local || (defined('APP_DEBUG') && APP_DEBUG === true);
+        return $local || (defined('APP_DEBUG') === true);
     }
 
     public function revokePremium(array $params = []): void

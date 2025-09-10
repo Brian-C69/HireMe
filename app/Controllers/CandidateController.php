@@ -353,4 +353,257 @@ final class CandidateController
         $this->flash('success', 'Verification submitted. We’ll review and update your status soon.');
         $this->redirect('/verify');
     }
+
+    private function requireEmployerOrRecruiter(): void
+    {
+        Auth::requireRole(['Employer', 'Recruiter']);
+    }
+
+    private function isUnlocked(PDO $pdo, string $viewerType, int $viewerId, int $candidateId): bool
+    {
+        $st = $pdo->prepare("SELECT 1 FROM resume_unlocks WHERE viewer_type=:t AND viewer_id=:v AND candidate_id=:c LIMIT 1");
+        $st->execute([':t' => $viewerType, ':v' => $viewerId, ':c' => $candidateId]);
+        return (bool)$st->fetchColumn();
+    }
+
+    private function deductOneCredit(PDO $pdo, string $viewerType, int $viewerId): bool
+    {
+        if ($viewerType === 'Employer') {
+            $st = $pdo->prepare("UPDATE employers SET credits_balance = credits_balance - 1 WHERE employer_id=:id AND credits_balance > 0");
+        } else {
+            $st = $pdo->prepare("UPDATE recruiters SET credits_balance = credits_balance - 1 WHERE recruiter_id=:id AND credits_balance > 0");
+        }
+        $st->execute([':id' => $viewerId]);
+        return $st->rowCount() === 1;
+    }
+
+    private function obfuscateEmail(string $email): string
+    {
+        if (!str_contains($email, '@')) return 'hidden';
+        [$u, $d] = explode('@', $email, 2);
+        if (strlen($u) <= 2) $u = substr($u, 0, 1) . '*';
+        else $u = substr($u, 0, 1) . str_repeat('*', max(1, strlen($u) - 2)) . substr($u, -1);
+        return $u . '@' . $d;
+    }
+    private function obfuscatePhone(string $p): string
+    {
+        $digits = preg_replace('/\D+/', '', $p);
+        if ($digits === '') return 'hidden';
+        return substr($digits, 0, 2) . str_repeat('*', max(1, strlen($digits) - 5)) . substr($digits, -3);
+    }
+
+    # --------------------------------------------------------
+    # GET /candidates  (Employer/Recruiter only)
+    # --------------------------------------------------------
+    public function directory(array $params = []): void
+    {
+        $this->requireEmployerOrRecruiter();
+
+        $pdo = DB::conn();
+
+        // Filters
+        $q        = trim((string)($_GET['q'] ?? ''));
+        $city     = trim((string)($_GET['city'] ?? ''));
+        $state    = trim((string)($_GET['state'] ?? ''));
+        $minExp   = (string)($_GET['min_exp'] ?? '');
+        $verified = (string)($_GET['verified'] ?? '');  // '1' or ''
+        $premium  = (string)($_GET['premium'] ?? '');   // '1' or ''
+        $per      = max(1, min(50, (int)($_GET['per'] ?? 12)));
+        $page     = max(1, (int)($_GET['page'] ?? 1));
+        $offset   = ($page - 1) * $per;
+        $unlockedIds = $this->unlockedIds($pdo);
+        $where = ['1=1'];
+        $bind  = [];
+
+        if ($q !== '') {
+            $where[] = '(c.full_name LIKE :q OR c.skills LIKE :q)';
+            $bind[':q'] = "%$q%";
+        }
+        if ($city !== '') {
+            $where[] = 'c.city LIKE :city';
+            $bind[':city'] = "%$city%";
+        }
+        if ($state !== '') {
+            $where[] = 'c.state LIKE :state';
+            $bind[':state'] = "%$state%";
+        }
+        if ($minExp !== '' && is_numeric($minExp)) {
+            $where[] = 'c.experience_years >= :minexp';
+            $bind[':minexp'] = (int)$minExp;
+        }
+        if ($verified === '1') {
+            $where[] = 'c.verified_status = 1';
+        }
+        if ($premium === '1') {
+            $where[] = 'c.premium_badge = 1';
+        }
+
+        $whereSql = 'WHERE ' . implode(' AND ', $where);
+
+        // Count
+        $st = $pdo->prepare("SELECT COUNT(*) FROM candidates c $whereSql");
+        $st->execute($bind);
+        $total = (int)($st->fetchColumn() ?: 0);
+
+        // Page
+        $sql = "
+          SELECT c.candidate_id, c.full_name, c.city, c.state, c.experience_years,
+                 c.premium_badge, c.verified_status, c.profile_picture_url, c.skills
+          FROM candidates c
+          $whereSql
+          ORDER BY c.updated_at DESC, c.candidate_id DESC
+          LIMIT :lim OFFSET :off
+        ";
+        $st = $pdo->prepare($sql);
+        foreach ($bind as $k => $v) $st->bindValue($k, $v);
+        $st->bindValue(':lim', $per, PDO::PARAM_INT);
+        $st->bindValue(':off', $offset, PDO::PARAM_INT);
+        $st->execute();
+        $rows = $st->fetchAll() ?: [];
+
+        // data to view
+        $root    = dirname(__DIR__, 2);
+        $title   = 'Candidates — HireMe';
+        $viewFile = $root . '/app/Views/candidates/index.php';
+        $pages   = max(1, (int)ceil($total / $per));
+        $filters = ['q' => $q, 'city' => $city, 'state' => $state, 'min_exp' => $minExp, 'verified' => $verified, 'premium' => $premium, 'per' => $per, 'page' => $page, 'total' => $total];
+
+        // provide CSRF for unlock forms inside cards (optional: unlock from list)
+        $csrf = $this->csrf();
+
+        require $root . '/app/Views/layout.php';
+    }
+
+    # --------------------------------------------------------
+    # GET /candidates/{id}
+    # --------------------------------------------------------
+    public function view(array $params = []): void
+    {
+        $this->requireEmployerOrRecruiter();
+
+        $id  = (int)($params['id'] ?? 0);
+        if ($id <= 0) {
+            $this->flash('danger', 'Invalid candidate.');
+            $this->redirect('/candidates');
+        }
+
+        $pdo = DB::conn();
+        $st  = $pdo->prepare("SELECT * FROM candidates WHERE candidate_id=:id LIMIT 1");
+        $st->execute([':id' => $id]);
+        $candidate = $st->fetch();
+
+        if (!$candidate) {
+            http_response_code(404);
+            $root = dirname(__DIR__, 2);
+            require $root . '/app/Views/errors/404.php';
+            return;
+        }
+
+        $viewerType = $_SESSION['user']['role'] ?? '';
+        $viewerId   = (int)($_SESSION['user']['id'] ?? 0);
+        $unlocked   = $this->isUnlocked($pdo, $viewerType, $viewerId, $id);
+
+        // limited sets if not unlocked
+        $experiences = $skills = $languages = $education = [];
+        if ($unlocked) {
+            $experiences = $this->fetchAll($pdo, "SELECT * FROM candidate_experiences WHERE candidate_id=:id ORDER BY start_date DESC, id DESC", [':id' => $id]);
+            $skills      = $this->fetchAll($pdo, "SELECT * FROM candidate_skills       WHERE candidate_id=:id ORDER BY level DESC, name ASC", [':id' => $id]);
+            $languages   = $this->fetchAll($pdo, "SELECT * FROM candidate_languages    WHERE candidate_id=:id ORDER BY language ASC", [':id' => $id]);
+            $education   = $this->fetchAll($pdo, "SELECT * FROM candidate_education    WHERE candidate_id=:id ORDER BY graduation_year DESC, id DESC", [':id' => $id]);
+        }
+
+        if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
+
+        $root     = dirname(__DIR__, 2);
+        $title    = 'Candidate — ' . htmlspecialchars($candidate['full_name'] ?? '');
+        $viewFile = $root . '/app/Views/candidates/show.php';
+        require $root . '/app/Views/layout.php';
+    }
+
+    # --------------------------------------------------------
+    # POST /candidates/{id}/unlock
+    # --------------------------------------------------------
+    public function unlock(array $params = []): void
+    {
+        $this->requireEmployerOrRecruiter();
+        if (!$this->csrfOk()) {
+            $this->flash('danger', 'Invalid session.');
+            $this->redirect('/candidates');
+        }
+
+        $cid = (int)($params['id'] ?? 0);
+        if ($cid <= 0) {
+            $this->flash('danger', 'Invalid candidate.');
+            $this->redirect('/candidates');
+        }
+
+        $pdo = DB::conn();
+        $viewerType = $_SESSION['user']['role'] ?? '';
+        $viewerId   = (int)($_SESSION['user']['id'] ?? 0);
+
+        // Already unlocked? (free)
+        if ($this->isUnlocked($pdo, $viewerType, $viewerId, $cid)) {
+            $this->flash('info', 'This resume is already unlocked for you.');
+            $this->redirect('/candidates/' . $cid);
+        }
+
+        $pdo->beginTransaction();
+        try {
+            // Deduct 1 credit atomically
+            if (!$this->deductOneCredit($pdo, $viewerType, $viewerId)) {
+                $pdo->rollBack();
+                $this->flash('danger', 'Not enough credits. Purchase more to unlock resumes.');
+                $this->redirect('/billing'); // or your payment page
+            }
+
+            // Record unlock
+            $ins = $pdo->prepare("INSERT INTO resume_unlocks (viewer_type, viewer_id, candidate_id, created_at)
+                                  VALUES (:t,:v,:c,:d)");
+            $ins->execute([
+                ':t' => $viewerType,
+                ':v' => $viewerId,
+                ':c' => $cid,
+                ':d' => date('Y-m-d H:i:s')
+            ]);
+
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $this->flash('danger', 'Could not unlock this resume.');
+            $this->redirect('/candidates/' . $cid);
+        }
+
+        $this->flash('success', 'Resume unlocked. You can now view full details.');
+        $this->redirect('/candidates/' . $cid);
+    }
+
+    // tiny fetchAll helper
+    private function fetchAll(PDO $pdo, string $sql, array $bind = []): array
+    {
+        $st = $pdo->prepare($sql);
+        $st->execute($bind);
+        return $st->fetchAll() ?: [];
+    }
+
+    private function unlockedIds(PDO $pdo): array
+    {
+        $role = $_SESSION['user']['role'] ?? '';
+        if (!in_array($role, ['Employer', 'Recruiter'], true)) {
+            return [];
+        }
+        $uid = (int)($_SESSION['user']['id'] ?? 0);
+
+        $st = $pdo->prepare("
+        SELECT candidate_id
+        FROM resume_unlocks
+        WHERE unlocked_by_type = :t AND unlocked_by_id = :id
+    ");
+        $st->execute([
+            ':t'  => $role,   // 'Employer' or 'Recruiter'
+            ':id' => $uid
+        ]);
+
+        $rows = $st->fetchAll() ?: [];
+        return array_map('intval', array_column($rows, 'candidate_id'));
+    }
 }
