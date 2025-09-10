@@ -11,6 +11,36 @@ $exp  = (int)($candidate['experience_years'] ?? 0);
 $premium = !empty($candidate['premium_badge']);
 $verified = !empty($candidate['verified_status']);
 ?>
+
+<style>
+    .lock-wrap {
+        position: relative;
+        display: inline-block;
+    }
+
+    .lock-blur {
+        filter: blur(6px);
+        opacity: .9;
+        user-select: none;
+        pointer-events: none;
+    }
+
+    .lock-tag {
+        position: absolute;
+        right: -6px;
+        top: -10px;
+        font-size: .7rem;
+    }
+
+    /* Optional: prevent text selection on whole line */
+    .no-select {
+        user-select: none;
+    }
+
+    .lock-wrap:hover .lock-blur {
+        filter: blur(4px);
+    }
+</style>
 <section class="py-4">
     <div class="container" style="max-width: 980px;">
         <div class="d-flex align-items-center mb-3">
@@ -49,13 +79,37 @@ $verified = !empty($candidate['verified_status']);
                         <?php if ($unlocked): ?>
                             <div>Email: <?= htmlspecialchars((string)($candidate['email'] ?? '')) ?></div>
                             <div>Phone: <?= htmlspecialchars((string)($candidate['phone_number'] ?? '')) ?></div>
-                            <?php if (!empty($candidate['address'])): ?><div>Address: <?= htmlspecialchars((string)$candidate['address']) ?></div><?php endif; ?>
+                            <?php if (!empty($candidate['address'])): ?>
+                                <div>Address: <?= htmlspecialchars((string)$candidate['address']) ?></div>
+                            <?php endif; ?>
                         <?php else: ?>
-                            <div>Email: <span class="text-muted">hidden</span></div>
-                            <div>Phone: <span class="text-muted">hidden</span></div>
-                            <div class="small text-muted mt-2">Unlock to reveal contact & full resume.</div>
+                            <?php
+                            // harmless placeholders (not real)
+                            $fakeEmail = 'johndoe@email.com';
+                            $fakePhone = '+60 12-222 2222';
+                            $fakeAddr  = '12, Jalan Contoh, 47500 Subang Jaya, Selangor';
+                            ?>
+                            <div class="no-select">
+                                Email:
+                                <span class="lock-wrap" aria-label="Unlock to reveal email" title="Unlock to reveal email">
+                                    <span class="lock-blur"><?= htmlspecialchars($fakeEmail) ?></span>
+                                    <span class="badge text-bg-secondary lock-tag">Locked</span>
+                                </span>
+                            </div>
+                            <div class="no-select mt-1">
+                                Phone:
+                                <span class="lock-wrap" aria-label="Unlock to reveal phone" title="Unlock to reveal phone">
+                                    <span class="lock-blur"><?= htmlspecialchars($fakePhone) ?></span>
+                                    <span class="badge text-bg-secondary lock-tag">Locked</span>
+                                </span>
+                            </div>
+
+                            <div class="small text-muted mt-2">
+                                Use 1 credit to unlock full contact details & resume.
+                            </div>
                         <?php endif; ?>
                     </div>
+
                 </div>
             </div>
 

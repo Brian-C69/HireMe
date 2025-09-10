@@ -361,7 +361,7 @@ final class CandidateController
 
     private function isUnlocked(PDO $pdo, string $viewerType, int $viewerId, int $candidateId): bool
     {
-        $st = $pdo->prepare("SELECT 1 FROM resume_unlocks WHERE viewer_type=:t AND viewer_id=:v AND candidate_id=:c LIMIT 1");
+        $st = $pdo->prepare("SELECT 1 FROM resume_unlocks WHERE unlocked_by_type=:t AND unlocked_by_id=:v AND candidate_id=:c LIMIT 1");
         $st->execute([':t' => $viewerType, ':v' => $viewerId, ':c' => $candidateId]);
         return (bool)$st->fetchColumn();
     }
@@ -397,9 +397,9 @@ final class CandidateController
     # --------------------------------------------------------
     public function directory(array $params = []): void
     {
-        $this->requireEmployerOrRecruiter();
+        \App\Core\Auth::requireRole(['Employer', 'Recruiter']); // or allow public browsing if you want
 
-        $pdo = DB::conn();
+        $pdo = \App\Core\DB::conn();
 
         // Filters
         $q        = trim((string)($_GET['q'] ?? ''));
@@ -411,7 +411,7 @@ final class CandidateController
         $per      = max(1, min(50, (int)($_GET['per'] ?? 12)));
         $page     = max(1, (int)($_GET['page'] ?? 1));
         $offset   = ($page - 1) * $per;
-        $unlockedIds = $this->unlockedIds($pdo);
+
         $where = ['1=1'];
         $bind  = [];
 
@@ -447,13 +447,13 @@ final class CandidateController
 
         // Page
         $sql = "
-          SELECT c.candidate_id, c.full_name, c.city, c.state, c.experience_years,
-                 c.premium_badge, c.verified_status, c.profile_picture_url, c.skills
-          FROM candidates c
-          $whereSql
-          ORDER BY c.updated_at DESC, c.candidate_id DESC
-          LIMIT :lim OFFSET :off
-        ";
+      SELECT c.candidate_id, c.full_name, c.city, c.state, c.experience_years,
+             c.premium_badge, c.verified_status, c.profile_picture_url, c.skills
+      FROM candidates c
+      $whereSql
+      ORDER BY c.updated_at DESC, c.candidate_id DESC
+      LIMIT :lim OFFSET :off
+    ";
         $st = $pdo->prepare($sql);
         foreach ($bind as $k => $v) $st->bindValue($k, $v);
         $st->bindValue(':lim', $per, PDO::PARAM_INT);
@@ -461,15 +461,23 @@ final class CandidateController
         $st->execute();
         $rows = $st->fetchAll() ?: [];
 
-        // data to view
-        $root    = dirname(__DIR__, 2);
-        $title   = 'Candidates — HireMe';
-        $viewFile = $root . '/app/Views/candidates/index.php';
-        $pages   = max(1, (int)ceil($total / $per));
-        $filters = ['q' => $q, 'city' => $city, 'state' => $state, 'min_exp' => $minExp, 'verified' => $verified, 'premium' => $premium, 'per' => $per, 'page' => $page, 'total' => $total];
+        // After fetching $rows:
+        $unlockedIds = $this->unlockedIds($pdo);
 
-        // provide CSRF for unlock forms inside cards (optional: unlock from list)
-        $csrf = $this->csrf();
+        $root     = dirname(__DIR__, 2);
+        $title    = 'Candidates — HireMe';
+        $viewFile = $root . '/app/Views/candidates/index.php';
+        $filters  = [
+            'q' => $q,
+            'city' => $city,
+            'state' => $state,
+            'min_exp' => $minExp,
+            'verified' => $verified,
+            'premium' => $premium,
+            'per' => $per,
+            'page' => $page,
+            'total' => $total
+        ];
 
         require $root . '/app/Views/layout.php';
     }
@@ -557,8 +565,7 @@ final class CandidateController
             }
 
             // Record unlock
-            $ins = $pdo->prepare("INSERT INTO resume_unlocks (viewer_type, viewer_id, candidate_id, created_at)
-                                  VALUES (:t,:v,:c,:d)");
+            $ins = $pdo->prepare("INSERT INTO resume_unlocks (unlocked_by_type, unlocked_by_id, candidate_id, created_at) VALUES (:t,:v,:c,:d)");
             $ins->execute([
                 ':t' => $viewerType,
                 ':v' => $viewerId,
@@ -591,19 +598,16 @@ final class CandidateController
         if (!in_array($role, ['Employer', 'Recruiter'], true)) {
             return [];
         }
-        $uid = (int)($_SESSION['user']['id'] ?? 0);
+        $viewerId = (int)($_SESSION['user']['id'] ?? 0);
 
         $st = $pdo->prepare("
         SELECT candidate_id
         FROM resume_unlocks
-        WHERE unlocked_by_type = :t AND unlocked_by_id = :id
+        WHERE unlocked_by_type = :t
+          AND unlocked_by_id   = :id
     ");
-        $st->execute([
-            ':t'  => $role,   // 'Employer' or 'Recruiter'
-            ':id' => $uid
-        ]);
+        $st->execute([':t' => $role, ':id' => $viewerId]);
 
-        $rows = $st->fetchAll() ?: [];
-        return array_map('intval', array_column($rows, 'candidate_id'));
+        return array_map('intval', array_column($st->fetchAll() ?: [], 'candidate_id'));
     }
 }

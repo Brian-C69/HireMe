@@ -63,7 +63,7 @@ $router->post('/resume', [ResumeController::class, 'update']);
 $router->get('/resume/pdf', [ResumeController::class, 'exportPdf']);
 
 $router->get('/applications', [\App\Controllers\ApplicationController::class, 'index']); // Candidate “My Applications”
-$router->post('/applications/{id}/withdraw', [\App\Controllers\ApplicationController::class, 'withdraw']);
+
 
 // Jobs (order matters: static before dynamic!)
 $router->get('/jobs',        [JobController::class, 'index']);
@@ -101,6 +101,9 @@ $router->post('/premium/unset', [PaymentController::class, 'revokePremium']);
 $router->get('/candidates',              [CandidateController::class, 'directory']); // list
 $router->get('/candidates/{id}',         [CandidateController::class, 'view']);      // detail limited/full
 $router->post('/candidates/{id}/unlock', [CandidateController::class, 'unlock']);    // unlock action
+
+$router->get('/privacy', [HomeController::class, 'privacy']);
+$router->get('/terms',   [HomeController::class, 'terms']);
 
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');

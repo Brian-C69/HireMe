@@ -13,4 +13,20 @@ final class HomeController
         $viewFile = $root . '/app/Views/home.php';
         require $root . '/app/Views/layout.php';
     }
+
+    public function privacy(array $params = []): void
+    {
+        $root     = dirname(__DIR__, 2);
+        $title    = 'Privacy Policy — HireMe';
+        $viewFile = $root . '/app/Views/privacy.php';
+        require $root . '/app/Views/layout.php';
+    }
+
+    public function terms(array $params = []): void
+    {
+        $root     = dirname(__DIR__, 2);
+        $title    = 'Terms of Service — HireMe';
+        $viewFile = $root . '/app/Views/terms.php';
+        require $root . '/app/Views/layout.php';
+    }
 }

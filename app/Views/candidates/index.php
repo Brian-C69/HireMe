@@ -143,19 +143,21 @@ $qs = function (array $o = []) use ($f) {
                                     <div class="ms-2 w-100">
                                         <div class="fw-semibold text-truncate" title="<?= $name ?>">
                                             <?= $name ?>
+                                        </div>
+                                        <div class="mt-1 small d-flex flex-wrap gap-1">
                                             <?php if ($premium): ?>
-                                                <span class="badge rounded-pill text-bg-warning text-dark ms-1">⭐ Premium</span>
+                                                <span class="badge rounded-pill text-bg-warning text-dark">⭐ Premium</span>
                                             <?php endif; ?>
                                             <?php if ($verified): ?>
-                                                <span class="badge rounded-pill text-bg-success ms-1">Verified ✓</span>
+                                                <span class="badge rounded-pill text-bg-success">Verified ✓</span>
                                             <?php endif; ?>
                                         </div>
 
                                         <div class="small text-muted candidate-meta">
                                             <div class="clamp-1 text-break">
-                                                <i class="bi bi-geo-alt me-1"></i><?= $loc ?>
+                                                <i class="bi bi-geo-alt me-1"></i><?= $locStr ?>
                                             </div>
-                                            <div><i class="bi bi-briefcase me-1"></i><?= $exp ?> yrs exp</div>
+                                            <div><i class="bi bi-briefcase me-1"></i><?= $years ?> yrs exp</div>
                                         </div>
                                     </div>
                                 </div>
