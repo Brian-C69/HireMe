@@ -71,8 +71,6 @@ if ($flash) unset($_SESSION['flash']); // show-once
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/applications">My Applications</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/verify">Verify</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/premium">Premium</a></li>
-                            <!--a href="<?= $base ?>/verify" class="btn btn-outline-secondary me-2">Verify</a>
-                            <a href="<?= $base ?>/premium" class="btn btn-warning"><i class="bi bi-star-fill me-1"></i> Go Premium</a-->
                         <?php endif; ?>
                     <?php else: ?>
                         <!-- Landing anchors for guests -->
