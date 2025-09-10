@@ -96,6 +96,7 @@ $router->post('/verify', [CandidateController::class, 'submitVerification']);
 // Premium badge (Candidate)
 $router->get('/premium',     [PaymentController::class, 'showPremium']);
 $router->post('/premium/pay', [PaymentController::class, 'payPremium']);
+$router->post('/premium/unset', [PaymentController::class, 'revokePremium']);
 
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');

@@ -133,6 +133,19 @@ function dateMY($d)
             background: #f3f3f3;
             border: 1px solid #e5e5e5;
         }
+
+        .chip {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 9999px;
+            background: #ffe08a;
+            color: #6b4e00;
+            font-weight: 700;
+            font-size: 11px;
+            vertical-align: middle;
+            line-height: 1;
+            border: 1px solid #f7c948;
+        }
     </style>
 </head>
 
@@ -140,7 +153,11 @@ function dateMY($d)
     <!-- Header -->
     <div class="grid mb-14">
         <div class="col w-70">
-            <h1><?= $val('full_name', 'Candidate') ?></h1>
+            <h1><?= $val('full_name', 'Candidate') ?>
+                <?php if (!empty($me['premium_badge'])): ?>
+                    <span class="chip">⭐ Premium</span>
+                <?php endif; ?>
+            </h1>
             <div class="muted small">
                 <span><?= htmlspecialchars((string)($candidate['email'] ?? '')) ?></span> ·
                 <span><?= htmlspecialchars((string)($candidate['phone_number'] ?? '')) ?></span>

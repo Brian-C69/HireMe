@@ -45,6 +45,7 @@ final class PaymentController
         $viewFile = $root . '/app/Views/payment/premium.php';
         $price  = 50.00; // RM50
         $csrf   = $this->csrf();
+        $isDev  = $this->isDev();
         require $root . '/app/Views/layout.php';
     }
 
@@ -98,8 +99,38 @@ final class PaymentController
             $this->flash('danger', 'Payment failed. Please try again.');
             $this->redirect('/premium');
         }
-
+        $_SESSION['user']['premium_badge'] = 1;
         $this->flash('success', 'Premium badge activated!');
+        $this->redirect('/premium');
+    }
+
+    private function isDev(): bool
+    {
+        // Allow on localhost or when APP_DEBUG is true (optional constant from config)
+        $local = in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true);
+        return $local || (defined('APP_DEBUG') && APP_DEBUG === true);
+    }
+
+    public function revokePremium(array $params = []): void
+    {
+        \App\Core\Auth::requireRole('Candidate');
+        if (!$this->csrfOk()) {
+            $this->flash('danger', 'Invalid session.');
+            $this->redirect('/premium');
+        }
+        if (!$this->isDev()) {
+            $this->flash('danger', 'Dev-only action.');
+            $this->redirect('/premium');
+        }
+
+        $pdo = \App\Core\DB::conn();
+        $id  = (int)($_SESSION['user']['id'] ?? 0);
+
+        $pdo->prepare("UPDATE candidates SET premium_badge=0, premium_badge_date=NULL, updated_at=:u WHERE candidate_id=:id")
+            ->execute([':u' => date('Y-m-d H:i:s'), ':id' => $id]);
+
+        $_SESSION['user']['premium_badge'] = 0;
+        $this->flash('success', 'Premium badge revoked (dev).');
         $this->redirect('/premium');
     }
 }

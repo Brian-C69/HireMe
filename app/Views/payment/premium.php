@@ -27,6 +27,13 @@ $has   = !empty($me['premium_badge']);
                     <div class="alert alert-success d-flex align-items-center"><i class="bi bi-check-circle me-2"></i>
                         Your premium badge is active. Thank you!</div>
                     <a class="btn btn-outline-secondary" href="<?= $base ?>/welcome">Back to Dashboard</a>
+                    <?php if ($isDev): ?>
+                        <form action="<?= $base ?>/premium/unset" method="post" class="d-inline"
+                            onsubmit="return confirm('Revoke premium (dev only)?');">
+                            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
+                            <button class="btn btn-outline-danger" type="submit">DEV: Un-Premium</button>
+                        </form>
+                    <?php endif; ?>
                 <?php else: ?>
                     <form action="<?= $base ?>/premium/pay" method="post" class="d-inline">
                         <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
@@ -35,6 +42,9 @@ $has   = !empty($me['premium_badge']);
                         </button>
                     </form>
                     <a class="btn btn-outline-secondary ms-2" href="<?= $base ?>/welcome">Cancel</a>
+                    <?php if ($isDev): ?>
+                        <div class="form-text mt-2">Dev mode is ON — you can revoke premium after purchase.</div>
+                    <?php endif; ?>
                 <?php endif; ?>
             </div>
         </div>

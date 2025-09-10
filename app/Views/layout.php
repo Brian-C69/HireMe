@@ -85,6 +85,9 @@ if ($flash) unset($_SESSION['flash']); // show-once
                         <span class="navbar-text small text-muted">
                             <?= htmlspecialchars($_SESSION['user']['email'] ?? '') ?> (<?= htmlspecialchars($role) ?>)
                         </span>
+                        <?php if (($_SESSION['user']['role'] ?? '') === 'Candidate' && !empty($_SESSION['user']['premium_badge'])): ?>
+                            <span class="badge rounded-pill bg-warning text-dark align-text-top ms-1">⭐ Premium</span>
+                        <?php endif; ?>
                         <a href="<?= $base ?>/logout" class="btn btn-outline-secondary">Logout</a>
                     <?php else: ?>
                         <a href="<?= $base ?>/login" class="btn btn-outline-primary">Login</a>
