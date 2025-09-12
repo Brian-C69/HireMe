@@ -345,11 +345,24 @@ final class CandidateController
         // Persist: mark as submitted (still not verified — admin will approve later)
         $now = date('Y-m-d H:i:s');
         $pdo->prepare("
-            UPDATE candidates
-            SET verification_doc_type=:t, verification_doc_url=:u, verified_status=0, verification_date=:d, updated_at=:u2
-            WHERE candidate_id=:id
-        ")->execute([':t' => $docType, ':u' => $url, ':d' => $now, ':u2' => $now, ':id' => $id]);
-
+    UPDATE candidates
+    SET verification_doc_type = :t,
+        verification_doc_url  = :u,
+        verification_date     = :d,
+        verified_status       = 0,                 -- not verified yet
+        verification_state    = 'Pending',
+        verification_review_notes = NULL,
+        verification_reviewed_at  = NULL,
+        verification_reviewed_by  = NULL,
+        updated_at            = :u2
+    WHERE candidate_id = :id
+")->execute([
+            ':t'  => $docType,
+            ':u'  => $url,
+            ':d'  => $now,
+            ':u2' => $now,
+            ':id' => $id
+        ]);
         $this->flash('success', 'Verification submitted. We’ll review and update your status soon.');
         $this->redirect('/verify');
     }

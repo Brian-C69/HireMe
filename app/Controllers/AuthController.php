@@ -126,6 +126,12 @@ final class AuthController
         $verified = 0;
 
         switch ((string)$user['role']) {
+            case 'Admin':
+                $st = $pdo->prepare("SELECT full_name FROM admins WHERE admin_id = :id LIMIT 1");
+                $st->execute([':id' => (int)$user['id']]);
+                if ($row = $st->fetch()) $name = (string)($row['full_name'] ?? '');
+                break;
+
             case 'Candidate':
                 $st = $pdo->prepare("SELECT full_name, premium_badge, verified_status FROM candidates WHERE candidate_id = :id LIMIT 1");
                 $st->execute([':id' => (int)$user['id']]);
@@ -183,6 +189,7 @@ final class AuthController
     {
         foreach (
             [
+                ["SELECT admin_id     AS id, email, password_hash, 'Admin'     AS role FROM admins     WHERE email=:e LIMIT 1"],
                 ["SELECT candidate_id AS id, email, password_hash, 'Candidate' AS role FROM candidates WHERE email=:e LIMIT 1"],
                 ["SELECT employer_id AS id, email, password_hash, 'Employer'  AS role FROM employers  WHERE email=:e LIMIT 1"],
                 ["SELECT recruiter_id AS id, email, password_hash, 'Recruiter' AS role FROM recruiters WHERE email=:e LIMIT 1"],
@@ -427,7 +434,9 @@ final class AuthController
         $email = $row['email'];
         $role = $row['user_type'];
         $newHash = password_hash($password, PASSWORD_DEFAULT);
-        if ($role === 'Candidate') {
+        if ($role === 'Admin') {
+            $q = $pdo->prepare("UPDATE admins SET password_hash=:p, updated_at=NOW() WHERE email=:e LIMIT 1");
+        } elseif ($role === 'Candidate') {
             $q = $pdo->prepare("UPDATE candidates SET password_hash=:p, updated_at=NOW() WHERE email=:e LIMIT 1");
         } elseif ($role === 'Employer') {
             $q = $pdo->prepare("UPDATE employers SET password_hash=:p, updated_at=NOW() WHERE email=:e LIMIT 1");

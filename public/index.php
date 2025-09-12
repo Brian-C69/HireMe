@@ -32,6 +32,7 @@ use App\Controllers\EmployerController;
 use App\Controllers\ApplicationController;
 use App\Controllers\PaymentController;
 use App\Controllers\RecruiterCompaniesController;
+use App\Controllers\AdminController;
 
 $router = new Router();
 
@@ -122,6 +123,59 @@ $router->get('/companies/{id}/edit',      [RecruiterCompaniesController::class, 
 $router->post('/companies/{id}/edit',     [RecruiterCompaniesController::class, 'update']);
 $router->post('/companies/{id}/delete',   [RecruiterCompaniesController::class, 'destroy']);
 $router->post('/companies/bulk',          [RecruiterCompaniesController::class, 'bulk']);
+
+// Admin
+$router->get('/admin',                         [AdminController::class, 'dashboard']);
+$router->get('/admin/tables',                  [AdminController::class, 'tables']);
+$router->get('/admin/t/{table}',               [AdminController::class, 'browse']);
+$router->get('/admin/t/{table}/create',        [AdminController::class, 'create']);
+$router->post('/admin/t/{table}',              [AdminController::class, 'store']);
+$router->get('/admin/t/{table}/{id}/edit',     [AdminController::class, 'edit']);
+$router->post('/admin/t/{table}/{id}/edit',    [AdminController::class, 'update']);
+$router->post('/admin/t/{table}/{id}/delete',  [AdminController::class, 'destroy']);
+$router->get('/admin/candidates', [AdminController::class, 'candidatesIndex']);
+$router->get('/admin/employers',  [AdminController::class, 'employersIndex']);
+$router->get('/admin/recruiters', [AdminController::class, 'recruitersIndex']);
+
+$router->get('/admin/candidates',                 [AdminController::class, 'candidatesIndex']);
+$router->get('/admin/candidates/create',          [AdminController::class, 'candidatesCreate']);
+$router->post('/admin/candidates',                 [AdminController::class, 'candidatesStore']);
+$router->get('/admin/candidates/{id}/edit',       [AdminController::class, 'candidatesEdit']);
+$router->post('/admin/candidates/{id}/edit',       [AdminController::class, 'candidatesUpdate']);
+$router->post('/admin/candidates/{id}/delete',     [AdminController::class, 'candidatesDestroy']);
+$router->post('/admin/candidates/bulk',            [AdminController::class, 'candidatesBulk']);
+
+$router->get('/admin/employers',                 [AdminController::class, 'employersIndex']);
+$router->get('/admin/employers/create',          [AdminController::class, 'employersCreate']);
+$router->post('/admin/employers',                 [AdminController::class, 'employersStore']);
+$router->get('/admin/employers/{id}/edit',       [AdminController::class, 'employersEdit']);
+$router->post('/admin/employers/{id}/edit',       [AdminController::class, 'employersUpdate']);
+$router->post('/admin/employers/{id}/delete',     [AdminController::class, 'employersDestroy']);
+$router->post('/admin/employers/bulk',            [AdminController::class, 'employersBulk']);
+
+$router->get('/admin/recruiters',               [AdminController::class, 'recruitersIndex']);
+$router->get('/admin/recruiters/create',        [AdminController::class, 'recruitersCreate']);
+$router->post('/admin/recruiters',               [AdminController::class, 'recruitersStore']);
+$router->get('/admin/recruiters/{id}/edit',     [AdminController::class, 'recruitersEdit']);
+$router->post('/admin/recruiters/{id}/edit',     [AdminController::class, 'recruitersUpdate']);
+$router->post('/admin/recruiters/{id}/delete',   [AdminController::class, 'recruitersDestroy']);
+$router->post('/admin/recruiters/bulk',          [AdminController::class, 'recruitersBulk']);
+
+$router->get('/admin/jobs',               [AdminController::class, 'jobsIndex']);
+$router->get('/admin/jobs/create',        [AdminController::class, 'jobsCreate']);
+$router->post('/admin/jobs',               [AdminController::class, 'jobsStore']);
+$router->get('/admin/jobs/{id}/edit',     [AdminController::class, 'jobsEdit']);
+$router->post('/admin/jobs/{id}/edit',     [AdminController::class, 'jobsUpdate']);
+$router->post('/admin/jobs/{id}/delete',   [AdminController::class, 'jobsDestroy']);
+$router->post('/admin/jobs/bulk',          [AdminController::class, 'jobsBulk']);
+
+$router->get('/admin/verifications',                 [AdminController::class, 'verifIndex']);
+$router->get('/admin/verifications/{id}',            [AdminController::class, 'verifShow']);
+$router->post('/admin/verifications/{id}/approve',    [AdminController::class, 'verifApprove']);
+$router->post('/admin/verifications/{id}/reject',     [AdminController::class, 'verifReject']);
+$router->post('/admin/verifications/bulk',            [AdminController::class, 'verifBulk']);
+
+
 
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');

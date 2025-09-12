@@ -101,7 +101,76 @@ $base = defined('BASE_URL') ? BASE_URL : '';
                         </div>
                     </div>
                 </div>
+            <?php elseif ($role === 'Admin'): ?>
+                <div class="col-md-6 col-lg-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Overview & Metrics</h5>
+                            <p class="card-text text-muted">Quick stats across users, jobs and applications.</p>
+                            <a class="btn btn-primary" href="<?= $base ?>/admin/overview">Open Overview</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-lg-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Manage Candidates</h5>
+                            <p class="card-text text-muted">Create, read, update, and delete candidate accounts.</p>
+                            <a class="btn btn-outline-primary" href="<?= $base ?>/admin/candidates">Open Candidates</a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6 col-lg-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Manage Employers</h5>
+                            <p class="card-text text-muted">Administer employer companies and users.</p>
+                            <a class="btn btn-outline-primary" href="<?= $base ?>/admin/employers">Open Employers</a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6 col-lg-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Manage Recruiters</h5>
+                            <p class="card-text text-muted">Oversee recruiter accounts and client companies.</p>
+                            <a class="btn btn-outline-primary" href="<?= $base ?>/admin/recruiters">Open Recruiters</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-lg-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Jobs & Applications</h5>
+                            <p class="card-text text-muted">Moderate jobs, review applications.</p>
+                            <a class="btn btn-outline-primary" href="<?= $base ?>/admin/jobs">Open Jobs</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-lg-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Check KYC</h5>
+                            <p class="card-text text-muted">Review candidate verification submissions.</p>
+                            <a class="btn btn-outline-secondary" href="<?= $base ?>/admin/verifications">
+                                Open Verifications
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-lg-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Credits & Payments</h5>
+                            <p class="card-text text-muted">Adjust balances, audit purchases.</p>
+                            <a class="btn btn-outline-secondary" href="<?= $base ?>/admin/credits">Open Credits</a>
+                        </div>
+                    </div>
+                </div>
             <?php endif; ?>
+
         </div>
     </div>
 </section>

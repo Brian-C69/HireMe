@@ -74,9 +74,15 @@ if ($flash) unset($_SESSION['flash']); // show-once
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/applications">My Applications</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/verify">Verify</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/premium">Premium</a></li>
+                        <?php elseif ($role === 'Admin'): ?>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/admin/candidates">Candidates</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/admin/employers">Employers</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/admin/recruiters">Recruiters</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/admin/jobs">Jobs</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/admin/applications">Applications</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/admin/credits ?>">Credits</a></li>
                         <?php endif; ?>
                     <?php else: ?>
-                        <!-- Landing anchors for guests -->
                         <li class="nav-item"><a class="nav-link" href="<?= $base ?>/index.php#features">Features</a></li>
                         <li class="nav-item"><a class="nav-link" href="<?= $base ?>/index.php#how">How It Works</a></li>
                         <li class="nav-item"><a class="nav-link" href="<?= $base ?>/index.php#roles">Roles</a></li>
@@ -111,6 +117,9 @@ if ($flash) unset($_SESSION['flash']); // show-once
                         <?php } ?>
                         <?php if (($_SESSION['user']['role'] ?? '') === 'Candidate' && !empty($_SESSION['user']['premium_badge'])): ?>
                             <span class="badge rounded-pill bg-warning text-dark align-text-top ms-1">⭐ Premium</span>
+                        <?php endif; ?>
+                        <?php if (($_SESSION['user']['role'] ?? '') === 'Candidate' && !empty($_SESSION['user']['verified_status'])): ?>
+                            <span class="badge rounded-pill bg-info text-dark align-text-top ms-1">✔ Verified</span>
                         <?php endif; ?>
                         <a href="<?= $base ?>/logout" class="btn btn-outline-secondary">Logout</a>
                     <?php else: ?>

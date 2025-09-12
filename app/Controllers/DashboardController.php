@@ -51,18 +51,14 @@ final class DashboardController
 
     public function welcome(array $params = []): void
     {
-        $auth = $this->requireAuth();
-        $pdo  = DB::conn();
+        $root  = dirname(__DIR__, 2);
+        $user  = $_SESSION['user'] ?? [];
+        $role  = (string)($user['role'] ?? '');
+        $email = (string)($user['email'] ?? '');
+        $displayName = (string)($user['name'] ?? ($role === 'Admin' ? 'Administrator' : 'User'));
 
-        $root     = dirname(__DIR__, 2);
-        $title    = 'Welcome — HireMe';
+        $title    = 'Dashboard — HireMe';
         $viewFile = $root . '/app/Views/dashboard.php';
-
-        // data for the view
-        $role        = $auth['role'] ?? '';
-        $email       = $auth['email'] ?? '';
-        $displayName = $this->displayName($pdo, $auth);
-
         require $root . '/app/Views/layout.php';
     }
 }
