@@ -6,6 +6,7 @@ $val = fn($k, $d = '') => htmlspecialchars($old[$k] ?? $d);
 $cls = fn($k) => isset($errors[$k]) ? 'is-invalid' : '';
 $qbank  = $qbank ?? []; // from controller
 $chosen = array_map('intval', (array)($old['mi_questions'] ?? []));
+$companies = $companies ?? [];
 ?>
 <section class="py-5">
     <div class="container" style="max-width: 820px;">
@@ -14,6 +15,38 @@ $chosen = array_map('intval', (array)($old['mi_questions'] ?? []));
             <div class="card-body">
                 <form action="<?= $base ?>/jobs" method="post" novalidate>
                     <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf'] ?? '') ?>">
+                    <?php if ($role === 'Recruiter'): ?>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Company (client)</label>
+
+                            <?php if (!$companies): ?>
+                                <div class="alert alert-warning small d-flex align-items-center justify-content-between">
+                                    <span>You haven’t added any client companies yet.</span>
+                                    <a class="btn btn-sm btn-outline-primary" href="<?= $base ?>/companies/create">Add Company</a>
+                                </div>
+                            <?php endif; ?>
+
+                            <select class="form-select <?= $cls('company_id') ?>" name="company_id" <?= $companies ? '' : 'disabled' ?>>
+                                <option value="">— Select a company —</option>
+                                <?php
+                                $selectedCompany = (string)($old['company_id'] ?? '');
+                                foreach ($companies as $c):
+                                    $cid   = (int)$c['employer_id'];
+                                    $cname = htmlspecialchars((string)$c['company_name'] ?? '');
+                                    $sel   = ($selectedCompany !== '' && (int)$selectedCompany === $cid) ? 'selected' : '';
+                                ?>
+                                    <option value="<?= $cid ?>" <?= $sel ?>><?= $cname ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <?php if (isset($errors['company_id'])): ?>
+                                <div class="invalid-feedback d-block"><?= htmlspecialchars($errors['company_id']) ?></div>
+                            <?php endif; ?>
+
+                            <div class="small mt-2">
+                                <a href="<?= $base ?>/companies" class="link-secondary">Manage companies</a>
+                            </div>
+                        </div>
+                    <?php endif; ?>
                     <div class="row g-3">
                         <div class="col-md-8">
                             <label class="form-label">Job Title</label>

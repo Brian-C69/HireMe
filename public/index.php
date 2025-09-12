@@ -31,6 +31,7 @@ use App\Controllers\ResumeController;
 use App\Controllers\EmployerController;
 use App\Controllers\ApplicationController;
 use App\Controllers\PaymentController;
+use App\Controllers\RecruiterCompaniesController;
 
 $router = new Router();
 
@@ -104,6 +105,23 @@ $router->post('/candidates/{id}/unlock', [CandidateController::class, 'unlock'])
 
 $router->get('/privacy', [HomeController::class, 'privacy']);
 $router->get('/terms',   [HomeController::class, 'terms']);
+
+$router->post('/jobs/bulk', [JobController::class, 'bulk']);
+
+$router->get('/jobs/{id}/applicants', [JobController::class, 'applicants']);
+$router->post('/applications/{id}/status', [ApplicationController::class, 'updateStatus']);
+
+$router->get('/credits',      [PaymentController::class, 'showCredits']);
+$router->post('/credits/pay', [PaymentController::class, 'payCredits']);
+
+// Recruiter: manage client companies
+$router->get('/companies',                [RecruiterCompaniesController::class, 'index']);
+$router->get('/companies/create',         [RecruiterCompaniesController::class, 'create']);
+$router->post('/companies',               [RecruiterCompaniesController::class, 'store']);
+$router->get('/companies/{id}/edit',      [RecruiterCompaniesController::class, 'edit']);
+$router->post('/companies/{id}/edit',     [RecruiterCompaniesController::class, 'update']);
+$router->post('/companies/{id}/delete',   [RecruiterCompaniesController::class, 'destroy']);
+$router->post('/companies/bulk',          [RecruiterCompaniesController::class, 'bulk']);
 
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');

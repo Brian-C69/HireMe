@@ -3,11 +3,10 @@ $base    = defined('BASE_URL') ? BASE_URL : '';
 $jobs    = $jobs ?? [];
 $filters = $filters ?? [];
 $page    = (int)($filters['page'] ?? 1);
-$per     = (int)($filters['per']  ?? 10);
+$per     = (int)($filters['per']  ?? 12);
 $pages   = (int)($pages ?? 1);
 $total   = $total ?? null;
 
-// Applied job IDs for the logged-in Candidate (controller should pass this)
 $appliedIds = $appliedIds ?? []; // array<int> of job_posting_id
 
 $qs = function (array $overrides = []) use ($filters) {
@@ -64,9 +63,9 @@ $to   = $total ? min($from + $per - 1, $total) : 0;
                     </div>
                     <div class="col-md-2">
                         <label class="form-label">Per Page</label>
-                        <?php $perSel = (int)($filters['per'] ?? 10); ?>
+                        <?php $perSel = (int)($filters['per'] ?? 12); ?>
                         <select class="form-select" name="per">
-                            <?php foreach ([10, 20, 30, 50] as $n): ?>
+                            <?php foreach ([12, 20, 30, 50] as $n): ?>
                                 <option value="<?= $n ?>" <?= $perSel === $n ? 'selected' : '' ?>><?= $n ?></option>
                             <?php endforeach; ?>
                         </select>

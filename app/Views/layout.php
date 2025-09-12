@@ -61,10 +61,13 @@ if ($flash) unset($_SESSION['flash']); // show-once
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs/mine">My Jobs</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs/create">Post Job</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/candidates">Candidates</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/credits">Buy Credits</a></li>
                         <?php elseif ($role === 'Recruiter'): ?>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/companies">Companies</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs/mine">My Jobs</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/jobs/create">Post Job</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/candidates">Candidates</a></li>
+                            <li class="nav-item"><a class="nav-link" href="<?= $base ?>/credits">Buy Credits</a></li>
                         <?php elseif ($role === 'Candidate'): ?>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/account">Profile</a></li>
                             <li class="nav-item"><a class="nav-link" href="<?= $base ?>/resume">Resume</a></li>
@@ -85,6 +88,27 @@ if ($flash) unset($_SESSION['flash']); // show-once
                         <span class="navbar-text small text-muted">
                             <?= htmlspecialchars($_SESSION['user']['email'] ?? '') ?> (<?= htmlspecialchars($role) ?>)
                         </span>
+                        <?php
+                        // Live credits badge for Employer/Recruiter
+                        if (in_array($role, ['Employer', 'Recruiter'], true)) {
+                            try {
+                                $pdo = \App\Core\DB::conn();
+                                $uid = (int)($_SESSION['user']['id'] ?? 0);
+                                if ($role === 'Employer') {
+                                    $st = $pdo->prepare("SELECT credits_balance FROM employers WHERE employer_id=:id LIMIT 1");
+                                } else {
+                                    $st = $pdo->prepare("SELECT credits_balance FROM recruiters WHERE recruiter_id=:id LIMIT 1");
+                                }
+                                $st->execute([':id' => $uid]);
+                                $credits = (int)($st->fetchColumn() ?: 0);
+                            } catch (\Throwable $e) {
+                                $credits = 0;
+                            }
+                        ?>
+                            <a href="<?= $base ?>/credits" class="badge rounded-pill bg-primary ms-2 text-decoration-none">
+                                Credit: <?= (int)$credits ?>
+                            </a>
+                        <?php } ?>
                         <?php if (($_SESSION['user']['role'] ?? '') === 'Candidate' && !empty($_SESSION['user']['premium_badge'])): ?>
                             <span class="badge rounded-pill bg-warning text-dark align-text-top ms-1">⭐ Premium</span>
                         <?php endif; ?>

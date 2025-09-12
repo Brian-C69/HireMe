@@ -133,4 +133,99 @@ final class PaymentController
         $this->flash('success', 'Premium badge revoked (dev).');
         $this->redirect('/premium');
     }
+
+    private const CREDIT_PRICE = 1.00; // RM per credit (edit later)
+
+    /** GET /credits — show packages */
+    public function showCredits(array $params = []): void
+    {
+        \App\Core\Auth::requireRole(['Employer', 'Recruiter']);
+
+        $pdo  = \App\Core\DB::conn();
+        $uid  = (int)($_SESSION['user']['id'] ?? 0);
+        $role = $_SESSION['user']['role'] ?? '';
+
+        // Current balance
+        if ($role === 'Employer') {
+            $st = $pdo->prepare("SELECT credits_balance FROM employers WHERE employer_id=:id LIMIT 1");
+        } else {
+            $st = $pdo->prepare("SELECT credits_balance FROM recruiters WHERE recruiter_id=:id LIMIT 1");
+        }
+        $st->execute([':id' => $uid]);
+        $balance = (int)($st->fetchColumn() ?: 0);
+
+        $root     = dirname(__DIR__, 2);
+        $title    = 'Buy Credits — HireMe';
+        $viewFile = $root . '/app/Views/payment/credits.php';
+        $csrf     = $this->csrf();
+        $unit     = self::CREDIT_PRICE;
+        $packages = [5, 10, 50, 100, 250]; // change freely
+
+        require $root . '/app/Views/layout.php';
+    }
+
+    /** POST /credits/pay — mock pay, add balance, record payment */
+    public function payCredits(array $params = []): void
+    {
+        \App\Core\Auth::requireRole(['Employer', 'Recruiter']);
+        if (!$this->csrfOk()) {
+            $this->flash('danger', 'Invalid session.');
+            $this->redirect('/credits');
+        }
+
+        // Prefer custom, else radio
+        $qty = 0;
+        if (isset($_POST['credits_custom']) && $_POST['credits_custom'] !== '') {
+            $qty = (int)$_POST['credits_custom'];
+        } elseif (isset($_POST['credits']) && $_POST['credits'] !== '') {
+            $qty = (int)$_POST['credits'];
+        }
+
+        if ($qty <= 0 || $qty > 10000) {
+            $this->flash('danger', 'Please choose a valid credit amount.');
+            $this->redirect('/credits');
+        }
+
+        $pdo  = \App\Core\DB::conn();
+        $uid  = (int)($_SESSION['user']['id'] ?? 0);
+        $role = $_SESSION['user']['role'] ?? '';
+
+        $amount = number_format($qty * self::CREDIT_PRICE, 2, '.', '');
+        $txid   = 'CR-' . strtoupper(bin2hex(random_bytes(6)));
+        $now    = date('Y-m-d H:i:s');
+
+        $pdo->beginTransaction();
+        try {
+            // Record payment
+            $pdo->prepare("
+          INSERT INTO payments (user_type, user_id, amount, purpose, payment_method, transaction_status, transaction_id, created_at)
+          VALUES (:typ, :uid, :amt, 'Credits Purchase', 'Test', 'Success', :tx, :ts)
+        ")->execute([':typ' => $role, ':uid' => $uid, ':amt' => $amount, ':tx' => $txid, ':ts' => $now]);
+
+            // Optional billing line
+            $pdo->prepare("
+          INSERT INTO billing (user_id, user_type, transaction_type, amount, payment_method, transaction_date, status, reference_number, created_at, updated_at)
+          VALUES (:uid, :typ, 'Credits Purchase', :amt, 'Test', :ts, 'Completed', :tx, :ts, :ts)
+        ")->execute([':uid' => $uid, ':typ' => $role, ':amt' => $amount, ':tx' => $txid, ':ts' => $now]);
+
+            // Increment balance
+            if ($role === 'Employer') {
+                $pdo->prepare("UPDATE employers SET credits_balance = COALESCE(credits_balance,0) + :q, updated_at=:u WHERE employer_id=:id")
+                    ->execute([':q' => $qty, ':u' => $now, ':id' => $uid]);
+            } else {
+                $pdo->prepare("UPDATE recruiters SET credits_balance = COALESCE(credits_balance,0) + :q, updated_at=:u WHERE recruiter_id=:id")
+                    ->execute([':q' => $qty, ':u' => $now, ':id' => $uid]);
+            }
+
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $this->flash('danger', 'Payment failed. Please try again.');
+            $this->redirect('/credits');
+        }
+
+        // No session cache yet, navbar reads fresh from DB each request (see next step)
+        $this->flash('success', "Purchased {$qty} credit(s). Thank you!");
+        $this->redirect('/credits');
+    }
 }

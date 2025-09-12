@@ -60,7 +60,7 @@ $base = defined('BASE_URL') ? BASE_URL : '';
                         <div class="card-body">
                             <h5 class="card-title">Applicants</h5>
                             <p class="card-text text-muted">Review, shortlist, and manage candidates.</p>
-                            <a class="btn btn-outline-primary" href="<?= $base ?>/applications">View Applicants</a>
+                            <a class="btn btn-outline-primary" href="<?= $base ?>/jobs/mine">View Applicants</a>
                         </div>
                     </div>
                 </div>
@@ -69,7 +69,7 @@ $base = defined('BASE_URL') ? BASE_URL : '';
                         <div class="card-body">
                             <h5 class="card-title">Resume Credits</h5>
                             <p class="card-text text-muted">Unlock more profiles from the talent pool.</p>
-                            <a class="btn btn-outline-secondary" href="<?= $base ?>/billing/credits">Buy Credits</a>
+                            <a class="btn btn-outline-secondary" href="<?= $base ?>/credits">Buy Credits</a>
                         </div>
                     </div>
                 </div>
@@ -95,9 +95,9 @@ $base = defined('BASE_URL') ? BASE_URL : '';
                 <div class="col-md-6 col-lg-4">
                     <div class="card h-100">
                         <div class="card-body">
-                            <h5 class="card-title">Micro-Interview</h5>
-                            <p class="card-text text-muted">Set quick questions for applicants.</p>
-                            <a class="btn btn-outline-secondary" href="<?= $base ?>/interviews/micro">Configure</a>
+                            <h5 class="card-title">Manage Companies</h5>
+                            <p class="card-text text-muted">Add or remove companies you are helping to recruit</p>
+                            <a class="btn btn-outline-secondary" href="<?= $base ?>/companies">Manage</a>
                         </div>
                     </div>
                 </div>

@@ -55,16 +55,29 @@ final class JobController
     {
         Auth::requireRole(['Employer', 'Recruiter']);
 
-        $pdo = DB::conn();
-        $uid = (int)($_SESSION['user']['id'] ?? 0);
+        $pdo  = DB::conn();
+        $uid  = (int)($_SESSION['user']['id'] ?? 0);
         $role = $_SESSION['user']['role'] ?? '';
 
-        // why: recruiter must choose which company to post for
-        $companies = [];
         if ($role === 'Recruiter') {
-            $companies = $pdo->query("SELECT employer_id, company_name FROM employers ORDER BY company_name ASC")->fetchAll() ?: [];
+            $st = $pdo->prepare("
+            SELECT employer_id, company_name, company_logo
+            FROM employers
+            WHERE is_client_company = 1 AND created_by_recruiter_id = :rid
+            ORDER BY company_name ASC
+        ");
+            $st->execute([':rid' => $uid]);
+            $companies = $st->fetchAll() ?: [];
         } else {
-            $companies = $pdo->query("SELECT employer_id, company_name FROM employers WHERE employer_id = " . (int)$uid)->fetchAll() ?: [];
+            // Employer posts for themselves
+            $st = $pdo->prepare("
+            SELECT employer_id, company_name, company_logo
+            FROM employers
+            WHERE employer_id = :id
+            LIMIT 1
+        ");
+            $st->execute([':id' => $uid]);
+            $companies = $st->fetchAll() ?: [];
         }
 
         $qbank = $pdo->query("SELECT id, prompt FROM micro_questions WHERE active = 1 ORDER BY id ASC")->fetchAll() ?: [];
@@ -86,7 +99,7 @@ final class JobController
             $this->flash('danger', 'Invalid session.');
             $this->redirect('/jobs/create');
         }
-
+        $pdo    = DB::conn();
         $role    = $_SESSION['user']['role'] ?? '';
         $userId  = (int)($_SESSION['user']['id'] ?? 0);
 
@@ -102,6 +115,19 @@ final class JobController
         $companyId = ($role === 'Employer')
             ? $userId
             : (int)($_POST['company_id'] ?? 0);
+
+        if ($role === 'Recruiter') {
+            if ($companyId <= 0) $errors['company_id'] = 'Please select a company.';
+
+            // Ownership check
+            if ($companyId > 0) {
+                $chk = $pdo->prepare("SELECT 1 FROM employers WHERE employer_id=:id AND is_client_company=1 AND created_by_recruiter_id=:rid");
+                $chk->execute([':id' => $companyId, ':rid' => $userId]);
+                if (!$chk->fetchColumn()) {
+                    $errors['company_id'] = 'Invalid company selection.';
+                }
+            }
+        }
 
         // exactly 3 micro-questions
         $chosen = array_values(array_filter((array)($_POST['mi_questions'] ?? []), fn($v) => ctype_digit((string)$v)));
@@ -255,7 +281,7 @@ final class JobController
         $company  = trim((string)($_GET['company'] ?? ''));
         $minSal   = (string)($_GET['min_salary'] ?? '');
         $langs    = trim((string)($_GET['languages'] ?? ''));
-        $perPage  = max(1, min(50, (int)($_GET['per'] ?? 10)));
+        $perPage  = max(1, min(50, (int)($_GET['per'] ?? 12)));
         $page     = max(1, (int)($_GET['page'] ?? 1));
         $offset   = ($page - 1) * $perPage;
 
@@ -348,16 +374,28 @@ final class JobController
 
         $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
         $sql = "
-          SELECT jp.*, e.company_name, e.company_logo
-          FROM job_postings jp
-          JOIN employers e ON e.employer_id = jp.company_id
-          $whereSql
-          ORDER BY jp.date_posted DESC, jp.job_posting_id DESC
-          LIMIT 200
-        ";
+  SELECT jp.*,
+         e.company_name,
+         e.company_logo,
+         COALESCE(ac.cnt, 0) AS applicants_count
+  FROM job_postings jp
+  JOIN employers e ON e.employer_id = jp.company_id
+  LEFT JOIN (
+      SELECT job_posting_id, COUNT(*) AS cnt
+      FROM applications
+      WHERE application_status <> 'Withdrawn'
+      GROUP BY job_posting_id
+  ) ac ON ac.job_posting_id = jp.job_posting_id
+  $whereSql
+  ORDER BY jp.date_posted DESC, jp.job_posting_id DESC
+  LIMIT 200";
         $st = $pdo->prepare($sql);
         $st->execute($bind);
         $jobs = $st->fetchAll() ?: [];
+
+        if (empty($_SESSION['csrf'])) {
+            $_SESSION['csrf'] = bin2hex(random_bytes(16));
+        }
 
         $root = dirname(__DIR__, 2);
         $title = 'My Jobs — HireMe';
@@ -546,5 +584,171 @@ final class JobController
 
         $this->flash('success', 'Job updated.');
         $this->redirect('/jobs/' . $id);
+    }
+
+    /** POST /jobs/bulk — bulk actions on selected jobs (owner only) */
+    public function bulk(array $params = []): void
+    {
+        \App\Core\Auth::requireRole(['Employer', 'Recruiter']);
+        if (!$this->csrfOk()) {
+            $this->flash('danger', 'Invalid session.');
+            $this->redirect('/jobs/mine');
+        }
+
+        $action = trim((string)($_POST['bulk_action'] ?? ''));
+        $ids    = array_values(array_filter((array)($_POST['ids'] ?? []), fn($v) => ctype_digit((string)$v)));
+        $ids    = array_map('intval', $ids);
+
+        if (!$ids) {
+            $this->flash('warning', 'Please select at least one job.');
+            $this->redirect('/jobs/mine');
+        }
+
+        $pdo  = DB::conn();
+        $uid  = (int)($_SESSION['user']['id'] ?? 0);
+        $role = $_SESSION['user']['role'] ?? '';
+
+        // Filter to only the jobs the current user owns
+        $ph = [];
+        $bind = [];
+        foreach ($ids as $i => $id) {
+            $k = ":id{$i}";
+            $ph[] = $k;
+            $bind[$k] = $id;
+        }
+
+        if ($role === 'Employer') {
+            $sqlOwn = "SELECT job_posting_id FROM job_postings WHERE job_posting_id IN (" . implode(',', $ph) . ") AND company_id = :me";
+        } else { // Recruiter
+            $sqlOwn = "SELECT job_posting_id FROM job_postings WHERE job_posting_id IN (" . implode(',', $ph) . ") AND recruiter_id = :me";
+        }
+        $bind[':me'] = $uid;
+
+        $st = $pdo->prepare($sqlOwn);
+        $st->execute($bind);
+        $allowedIds = array_map('intval', array_column($st->fetchAll() ?: [], 'job_posting_id'));
+
+        if (!$allowedIds) {
+            $this->flash('danger', 'Not authorized for the selected jobs.');
+            $this->redirect('/jobs/mine');
+        }
+
+        // Rebuild placeholders for allowed ids (keeps binding simple)
+        $ph = [];
+        $bind = [];
+        foreach ($allowedIds as $i => $id) {
+            $k = ":id{$i}";
+            $ph[] = $k;
+            $bind[$k] = $id;
+        }
+
+        $now = date('Y-m-d H:i:s');
+
+        if ($action === 'set_status') {
+            $new = trim((string)($_POST['new_status'] ?? ''));
+            if (!in_array($new, $this->statusOptions(), true)) {
+                $this->flash('danger', 'Invalid status.');
+                $this->redirect('/jobs/mine');
+            }
+            $sql = "UPDATE job_postings SET status = :s, updated_at = :u WHERE job_posting_id IN (" . implode(',', $ph) . ")";
+            $bind[':s'] = $new;
+            $bind[':u'] = $now;
+            $st = $pdo->prepare($sql);
+            $st->execute($bind);
+            $cnt = $st->rowCount();
+            $this->flash('success', "Updated status to '{$new}' for {$cnt} job(s).");
+            $this->redirect('/jobs/mine');
+        }
+
+        if ($action === 'delete') {
+            $sql = "UPDATE job_postings SET status = 'Deleted', updated_at = :u WHERE job_posting_id IN (" . implode(',', $ph) . ")";
+            $bind[':u'] = $now;
+            $st = $pdo->prepare($sql);
+            $st->execute($bind);
+            $cnt = $st->rowCount();
+            $this->flash('success', "Marked {$cnt} job(s) as Deleted.");
+            $this->redirect('/jobs/mine');
+        }
+
+        $this->flash('warning', 'Please choose a valid bulk action.');
+        $this->redirect('/jobs/mine');
+    }
+
+    public function applicants(array $params = []): void
+    {
+        \App\Core\Auth::requireRole(['Employer', 'Recruiter']);
+
+        $id  = (int)($params['id'] ?? 0);
+        $pdo = DB::conn();
+
+        // Ensure ownership
+        $job = $this->ownJob($pdo, $id);
+        if (!$job) {
+            $this->flash('danger', 'Not authorized.');
+            $this->redirect('/jobs/mine');
+        }
+
+        // The 3 micro-questions attached to this job
+        $qs = $pdo->prepare("
+        SELECT mq.id, mq.prompt
+        FROM job_micro_questions jmq
+        JOIN micro_questions mq ON mq.id = jmq.question_id
+        WHERE jmq.job_posting_id = :id
+        ORDER BY mq.id ASC
+    ");
+        $qs->execute([':id' => $id]);
+        $questions = $qs->fetchAll() ?: [];
+
+        // Applications + candidate info
+        $st = $pdo->prepare("
+        SELECT a.applicant_id, a.candidate_id, a.application_status, a.application_date,
+               c.full_name, c.city, c.state, c.profile_picture_url, c.experience_years,
+               c.premium_badge, c.verified_status
+        FROM applications a
+        JOIN candidates c ON c.candidate_id = a.candidate_id
+        WHERE a.job_posting_id = :jid
+        ORDER BY a.application_date DESC, a.applicant_id DESC
+    ");
+        $st->execute([':jid' => $id]);
+        $apps = $st->fetchAll() ?: [];
+
+        // Answers per application
+        $answersByApp = [];
+        if ($apps) {
+            $appIds = array_map(static fn($r) => (int)$r['applicant_id'], $apps);
+            $ph = [];
+            $bind = [];
+            foreach ($appIds as $i => $aid) {
+                $k = ":a{$i}";
+                $ph[] = $k;
+                $bind[$k] = $aid;
+            }
+            $ans = $pdo->prepare("
+            SELECT application_id, question_id, answer_text
+            FROM application_answers
+            WHERE application_id IN (" . implode(',', $ph) . ")
+        ");
+            $ans->execute($bind);
+            while ($row = $ans->fetch()) {
+                $answersByApp[(int)$row['application_id']][(int)$row['question_id']] = (string)$row['answer_text'];
+            }
+        }
+
+        // Which candidates are already unlocked by this viewer (useful for showing a small badge)
+        $viewerRole = $_SESSION['user']['role'] ?? '';
+        $viewerId   = (int)($_SESSION['user']['id'] ?? 0);
+        $st2 = $pdo->prepare("
+        SELECT candidate_id
+        FROM resume_unlocks
+        WHERE unlocked_by_type = :t AND unlocked_by_id = :id
+    ");
+        $st2->execute([':t' => $viewerRole, ':id' => $viewerId]);
+        $unlockedIds = array_map('intval', array_column($st2->fetchAll() ?: [], 'candidate_id'));
+
+        // Render
+        $root     = dirname(__DIR__, 2);
+        $title    = 'Applicants — ' . ($job['job_title'] ?? 'Job');
+        $viewFile = $root . '/app/Views/jobs/applicants.php';
+        require $root . '/app/Views/layout.php';
     }
 }

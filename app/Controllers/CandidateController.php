@@ -561,7 +561,7 @@ final class CandidateController
             if (!$this->deductOneCredit($pdo, $viewerType, $viewerId)) {
                 $pdo->rollBack();
                 $this->flash('danger', 'Not enough credits. Purchase more to unlock resumes.');
-                $this->redirect('/billing'); // or your payment page
+                $this->redirect('/credits'); // or your payment page
             }
 
             // Record unlock

@@ -333,4 +333,79 @@ final class ApplicationController
         $filters = ['status' => $status, 'q' => $q, 'per' => $per, 'page' => $page, 'total' => $total];
         require $root . '/app/Views/layout.php';
     }
+
+    /** POST /applications/{id}/status — Employer/Recruiter updates an application status */
+    public function updateStatus(array $params = []): void
+    {
+        \App\Core\Auth::requireRole(['Employer', 'Recruiter']);
+        if (!$this->csrfOk()) {
+            $this->flash('danger', 'Invalid session.');
+            $this->redirect('/jobs/mine');
+        }
+
+        $appId = (int)($params['id'] ?? 0);
+        $new   = trim((string)($_POST['status'] ?? ''));
+        $note  = trim((string)($_POST['note'] ?? ''));
+
+        // Allowed statuses (extend if you like)
+        $allowed = ['Applied', 'Reviewed', 'Interview', 'Rejected'];
+        if (!in_array($new, $allowed, true)) {
+            $this->flash('danger', 'Invalid status.');
+            $this->redirect('/jobs/mine');
+        }
+
+        $pdo = DB::conn();
+        $uid = (int)($_SESSION['user']['id'] ?? 0);
+        $role = $_SESSION['user']['role'] ?? '';
+
+        // Load application + ensure the current user owns the job posting (employer or assigned recruiter)
+        $st = $pdo->prepare("
+        SELECT a.applicant_id, a.application_status, a.job_posting_id, jp.company_id, jp.recruiter_id
+        FROM applications a
+        JOIN job_postings jp ON jp.job_posting_id = a.job_posting_id
+        WHERE a.applicant_id = :id
+        LIMIT 1
+    ");
+        $st->execute([':id' => $appId]);
+        $app = $st->fetch();
+
+        if (!$app) {
+            $this->flash('danger', 'Application not found.');
+            $this->redirect('/jobs/mine');
+        }
+
+        // Ownership check
+        $owns = ($role === 'Employer'  && (int)$app['company_id']   === $uid)
+            || ($role === 'Recruiter' && (int)($app['recruiter_id'] ?? 0) === $uid);
+
+        if (!$owns) {
+            $this->flash('danger', 'Not authorized.');
+            $this->redirect('/jobs/mine');
+        }
+
+        $old = (string)$app['application_status'];
+        if ($old === $new) {
+            $this->flash('info', 'Status already set.');
+            $this->redirect('/jobs/' . (int)$app['job_posting_id'] . '/applicants');
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("UPDATE applications SET application_status=:s, updated_at=:u WHERE applicant_id=:id")
+                ->execute([':s' => $new, ':u' => $now, ':id' => $appId]);
+
+            // History log
+            $this->logHistory($pdo, (int)$app['applicant_id'], $old, $new, $role, $uid, $note ?: null);
+
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $this->flash('danger', 'Could not update status.');
+            $this->redirect('/jobs/' . (int)$app['job_posting_id'] . '/applicants');
+        }
+
+        $this->flash('success', 'Status updated to ' . $new . '.');
+        $this->redirect('/jobs/' . (int)$app['job_posting_id'] . '/applicants');
+    }
 }
