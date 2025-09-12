@@ -1,60 +1,38 @@
 <?php
-$base     = defined('BASE_URL') ? BASE_URL : '';
-$balance  = $balance ?? 0;
-$unit     = $unit ?? 1.00;
-$packages = $packages ?? [5, 10, 50, 100, 250];
+$base   = defined('BASE_URL') ? BASE_URL : '';
+$errors = $errors ?? [];
+$csrf   = htmlspecialchars($_SESSION['csrf'] ?? '');
 ?>
-<section class="py-4">
-    <div class="container" style="max-width: 880px;">
+<section class="py-5">
+    <div class="container" style="max-width:720px;">
         <h1 class="h4 mb-3">Buy Credits</h1>
 
-        <div class="alert alert-info">
-            <div class="d-flex justify-content-between align-items-center">
-                <div>Current Balance: <strong><?= (int)$balance ?></strong> credits</div>
-                <div>Price: RM<?= number_format((float)$unit, 2) ?> / credit</div>
-            </div>
-        </div>
+        <?php if (!empty($errors['credits_qty'])): ?>
+            <div class="alert alert-danger"><?= htmlspecialchars($errors['credits_qty']) ?></div>
+        <?php endif; ?>
 
-        <form action="<?= $base ?>/credits/pay" method="post" class="card p-3">
-            <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf ?? '') ?>">
+        <form method="post" action="<?= $base ?>/credits/checkout">
+            <input type="hidden" name="csrf" value="<?= $csrf ?>">
             <div class="row g-3">
-
-                <!-- radios keep name="credits" -->
-                <?php foreach ($packages as $p): ?>
-                    <div class="col-6 col-md-4 col-lg-3">
-                        <label class="w-100">
-                            <input type="radio" name="credits" class="btn-check" value="<?= (int)$p ?>" id="cr-<?= (int)$p ?>">
-                            <span class="btn btn-outline-primary w-100">
-                                <?= (int)$p ?> Credits<br>
-                                <small class="text-muted">RM<?= number_format($p * (float)$unit, 2) ?></small>
-                            </span>
+                <?php foreach ([5, 10, 50, 100, 250, 500] as $qty): ?>
+                    <div class="col-6 col-md-4">
+                        <label class="border rounded p-3 w-100">
+                            <input type="radio" class="form-check-input me-2" name="credits_qty" value="<?= $qty ?>">
+                            <div class="fw-semibold"><?= $qty ?> credits</div>
+                            <div class="text-muted small">RM <?= number_format($qty, 2) ?></div>
                         </label>
                     </div>
                 <?php endforeach; ?>
+            </div>
 
-                <!-- Custom amount now uses a different name -->
-                <div class="col-12">
-                    <div class="input-group">
-                        <span class="input-group-text">Custom</span>
-                        <input
-                            type="number"
-                            min="1" max="10000" step="1"
-                            class="form-control"
-                            name="credits_custom"
-                            placeholder="Enter credits (1–10000)"
-                            oninput="document.querySelectorAll('input[name=credits]').forEach(r=>r.checked=false)">
-                        <button class="btn btn-primary" type="submit">Pay (Mock)</button>
-                    </div>
-                    <div class="form-text">Pick a package OR enter a custom amount.</div>
-                </div>
+            <div class="mt-4 d-flex gap-2">
+                <button type="submit" class="btn btn-primary">Checkout with Stripe</button>
+                <a href="<?= $base ?>/welcome" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+
+            <div class="text-muted small mt-3">
+                1 credit = RM1. You can use credits to unlock candidate contact info/resumes.
             </div>
         </form>
-
-        <hr class="my-4">
-
-        <p class="text-muted small">
-            Each unlocked candidate costs <strong>1 credit</strong>. Unlocking reveals full contact details and full resume.
-        </p>
-        <a class="btn btn-outline-secondary" href="<?= $base ?>/candidates">Browse Candidates</a>
     </div>
 </section>

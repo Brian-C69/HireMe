@@ -1,7 +1,10 @@
 <?php
 
 declare(strict_types=1);
-
+$vendor = dirname(__DIR__) . '/vendor/autoload.php';
+if (is_file($vendor)) {
+    require $vendor;
+}
 ini_set('display_errors', '1');
 error_reporting(E_ALL);
 date_default_timezone_set('Asia/Kuala_Lumpur');
@@ -175,7 +178,14 @@ $router->post('/admin/verifications/{id}/approve',    [AdminController::class, '
 $router->post('/admin/verifications/{id}/reject',     [AdminController::class, 'verifReject']);
 $router->post('/admin/verifications/bulk',            [AdminController::class, 'verifBulk']);
 
+// Credits
+$router->get('/credits',              [PaymentController::class, 'showCredits']);
+$router->post('/credits/checkout',    [PaymentController::class, 'checkoutCredits']);
+$router->get('/credits/success',      [PaymentController::class, 'creditsSuccess']);
+$router->get('/credits/cancel',       [PaymentController::class, 'creditsCancel']);
 
+// Stripe webhook (NO CSRF!)
+$router->post('/webhooks/stripe',     [PaymentController::class, 'webhook']);
 
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
