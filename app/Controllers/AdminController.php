@@ -1692,7 +1692,7 @@ final class AdminController
         $total = (int)$st->fetchColumn();
 
         $sql = "SELECT candidate_id, full_name, email, verification_doc_type, verification_doc_url,
-                   verification_date, verification_state, verification_review_notes
+                   verification_date, verification_state, verification_review_notes, verified_status
             FROM candidates
             $wsql
             ORDER BY verification_date DESC, candidate_id DESC
@@ -1774,7 +1774,7 @@ final class AdminController
 
         $pdo = \App\Core\DB::conn();
         $st = $pdo->prepare("UPDATE candidates
-                         SET verified_status=0,
+                         SET verified_status=2,
                              verification_state='Rejected',
                              verification_review_notes=:n,
                              verification_reviewed_at=NOW(),
