@@ -1806,7 +1806,7 @@ final class AdminController
         try {
             $pdo->prepare("
             UPDATE candidates
-               SET verified_status = -1,           -- -1 = Rejected
+               SET verified_status = 2,           -- -1 = Rejected
                    verification_state = 'Rejected',
                    verification_review_notes = :n,
                    verification_reviewed_at = NOW(),
