@@ -187,6 +187,28 @@ $router->get('/credits/cancel',       [PaymentController::class, 'creditsCancel'
 // Stripe webhook (NO CSRF!)
 $router->post('/webhooks/stripe',     [PaymentController::class, 'webhook']);
 
+$router->get('/admin/credits',  [\App\Controllers\AdminController::class, 'creditsIndex']);
+$router->post('/admin/credits/adjust', [\App\Controllers\AdminController::class, 'creditsAdjust']);
+$router->get('/admin/payments', [\App\Controllers\AdminController::class, 'paymentsIndex']);
+
+// Admin accounts CRUD
+$router->get('/admin/admins',             [\App\Controllers\AdminController::class, 'adminsIndex']);
+$router->get('/admin/admins/create',      [\App\Controllers\AdminController::class, 'adminsCreate']);
+$router->post('/admin/admins',             [\App\Controllers\AdminController::class, 'adminsStore']);
+$router->get('/admin/admins/{id}/edit',   [\App\Controllers\AdminController::class, 'adminsEdit']);
+$router->post('/admin/admins/{id}/edit',   [\App\Controllers\AdminController::class, 'adminsUpdate']);
+$router->post('/admin/admins/{id}/delete', [\App\Controllers\AdminController::class, 'adminsDelete']);
+
+// Admin “My Profile”
+$router->get('/admin/profile',            [\App\Controllers\AdminController::class, 'adminProfile']);
+$router->post('/admin/profile',            [\App\Controllers\AdminController::class, 'adminProfileUpdate']);
+
+$router->get('/admin/overview', [\App\Controllers\AdminController::class, 'overviewMetrics']);
+$router->get('/admin/metrics',  [\App\Controllers\AdminController::class, 'overviewMetrics']); // alias
+$router->get('/admin/metrics/export', [\App\Controllers\AdminController::class, 'metricsExport']); // CSV
+
+$router->get('/admin/overview/export-all', [\App\Controllers\AdminController::class, 'overviewExportAll']);
+
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 $uriPath = str_replace('\\', '/', parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/');

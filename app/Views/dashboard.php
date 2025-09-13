@@ -169,6 +169,24 @@ $base = defined('BASE_URL') ? BASE_URL : '';
                         </div>
                     </div>
                 </div>
+                <div class="col-md-6 col-lg-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Manage Admins</h5>
+                            <p class="card-text text-muted">Add, edit, or remove admin accounts.</p>
+                            <a class="btn btn-outline-primary" href="<?= $base ?>/admin/admins">Open Admins</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-lg-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">My Profile</h5>
+                            <p class="card-text text-muted">Update your name, email, and password.</p>
+                            <a class="btn btn-outline-secondary" href="<?= $base ?>/admin/profile">Open Profile</a>
+                        </div>
+                    </div>
+                </div>
             <?php endif; ?>
 
         </div>
