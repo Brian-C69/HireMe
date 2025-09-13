@@ -6,6 +6,7 @@ namespace App\Controllers;
 
 use App\Core\Auth;
 use App\Core\DB;
+use App\Services\Notify;
 use PDO;
 
 final class AdminController
@@ -1746,6 +1747,7 @@ final class AdminController
         require $root . '/app/Views/layout.php';
     }
 
+    /** POST /admin/verifications/{id}/approve */
     public function verifApprove(array $params = []): void
     {
         $this->requireAdmin();
@@ -1754,23 +1756,39 @@ final class AdminController
             $this->redirect('/admin/verifications');
         }
 
-        $id  = (int)($params['id'] ?? 0);
-        $pdo = \App\Core\DB::conn();
+        $id      = (int)($params['id'] ?? 0);
+        $adminId = (int)($_SESSION['user']['id'] ?? 0);
+        $pdo     = DB::conn();
 
-        $st = $pdo->prepare("UPDATE candidates
-                         SET verified_status=1,
-                             verification_state='Approved',
-                             verification_review_notes=NULL,
-                             verification_reviewed_at=NOW(),
-                             verification_reviewed_by=NULL,
-                             updated_at=NOW()
-                         WHERE candidate_id=:id LIMIT 1");
-        $st->execute([':id' => $id]);
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("
+            UPDATE candidates
+               SET verified_status = 1,            
+                   verification_state = 'Approved',
+                   verification_review_notes = NULL,
+                   verification_reviewed_at = NOW(),
+                   verification_reviewed_by = :aid,
+                   updated_at = NOW()
+             WHERE candidate_id = :id
+             LIMIT 1
+        ")->execute([':aid' => $adminId ?: null, ':id' => $id]);
+
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $this->flash('danger', 'Failed to approve verification.');
+            $this->redirect('/admin/verifications');
+        }
+
+        // Email the candidate
+        Notify::onCandidateVerification($id, 2);
 
         $this->flash('success', 'Verification approved.');
         $this->redirect('/admin/verifications');
     }
 
+    /** POST /admin/verifications/{id}/reject */
     public function verifReject(array $params = []): void
     {
         $this->requireAdmin();
@@ -1779,19 +1797,38 @@ final class AdminController
             $this->redirect('/admin/verifications');
         }
 
-        $id    = (int)($params['id'] ?? 0);
-        $notes = trim((string)($_POST['notes'] ?? ''));
+        $id      = (int)($params['id'] ?? 0);
+        $notes   = trim((string)($_POST['notes'] ?? ''));
+        $adminId = (int)($_SESSION['user']['id'] ?? 0);
+        $pdo     = DB::conn();
 
-        $pdo = \App\Core\DB::conn();
-        $st = $pdo->prepare("UPDATE candidates
-                         SET verified_status=2,
-                             verification_state='Rejected',
-                             verification_review_notes=:n,
-                             verification_reviewed_at=NOW(),
-                             verification_reviewed_by=NULL,
-                             updated_at=NOW()
-                         WHERE candidate_id=:id LIMIT 1");
-        $st->execute([':n' => $notes ?: null, ':id' => $id]);
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("
+            UPDATE candidates
+               SET verified_status = -1,           -- -1 = Rejected
+                   verification_state = 'Rejected',
+                   verification_review_notes = :n,
+                   verification_reviewed_at = NOW(),
+                   verification_reviewed_by = :aid,
+                   updated_at = NOW()
+             WHERE candidate_id = :id
+             LIMIT 1
+        ")->execute([
+                ':n'   => ($notes !== '' ? $notes : null),
+                ':aid' => $adminId ?: null,
+                ':id'  => $id,
+            ]);
+
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $this->flash('danger', 'Failed to reject verification.');
+            $this->redirect('/admin/verifications');
+        }
+
+        // Email the candidate (rejected)
+        Notify::onCandidateVerification($id, -1);
 
         $this->flash('success', 'Verification rejected.');
         $this->redirect('/admin/verifications');

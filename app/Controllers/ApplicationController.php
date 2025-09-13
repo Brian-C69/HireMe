@@ -8,6 +8,7 @@ namespace App\Controllers;
 
 use App\Core\Auth;
 use App\Core\DB;
+use App\Services\Notify;
 use PDO;
 
 final class ApplicationController
@@ -194,6 +195,8 @@ final class ApplicationController
                 $ins->execute([':cid' => $cid, ':jid' => $jobId, ':ad' => $now, ':ua' => $now]);
                 $appId = (int)$pdo->lastInsertId();
 
+                \App\Services\Notify::onApplicationCreated($appId);
+
                 // History: NULL -> Applied
                 $this->logHistory($pdo, $appId, null, 'Applied', 'Candidate', $cid, null);
             } else {
@@ -270,7 +273,7 @@ final class ApplicationController
 
         // History: Applied/Reviewed -> Withdrawn
         $this->logHistory($pdo, (int)$app['applicant_id'], $old, 'Withdrawn', 'Candidate', $cid, null);
-
+        \App\Services\Notify::onApplicationCreated($appId);
         $this->flash('success', 'Application withdrawn.');
         $jid = (int)$app['job_posting_id'];
         $this->redirect($jid ? '/jobs/' . $jid : '/applications');
@@ -394,7 +397,7 @@ final class ApplicationController
         try {
             $pdo->prepare("UPDATE applications SET application_status=:s, updated_at=:u WHERE applicant_id=:id")
                 ->execute([':s' => $new, ':u' => $now, ':id' => $appId]);
-
+            Notify::onApplicationStatusChanged($appId, $new);
             // History log
             $this->logHistory($pdo, (int)$app['applicant_id'], $old, $new, $role, $uid, $note ?: null);
 
