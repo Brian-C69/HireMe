@@ -54,15 +54,20 @@ $config = require $root . '/config/config.php';
 // -----------------------------------------------------------------------------
 // Error handling
 // -----------------------------------------------------------------------------
-ini_set('display_errors', $config['app']['display_errors'] ?? '1');
+$debug = (bool)($config['app']['debug'] ?? false);
+ini_set('display_errors', $debug ? '1' : '0');
 error_reporting($config['app']['error_level'] ?? E_ALL);
 set_error_handler(function (int $severity, string $message, string $file, int $line): bool {
     throw new \ErrorException($message, 0, $severity, $file, $line);
 });
-set_exception_handler(function (\Throwable $e): void {
+set_exception_handler(function (\Throwable $e) use ($debug): void {
     error_log((string) $e);
     http_response_code(500);
-    echo 'Application error';
+    if ($debug) {
+        echo $e->getMessage() . "\n" . $e->getTraceAsString();
+    } else {
+        echo 'Application error';
+    }
 });
 
 date_default_timezone_set($_ENV['APP_TZ'] ?? 'Asia/Kuala_Lumpur');

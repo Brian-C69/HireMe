@@ -1,5 +1,8 @@
 <?php
 return [
+    'app' => [
+        'debug' => filter_var($_ENV['APP_DEBUG'] ?? true, FILTER_VALIDATE_BOOL),
+    ],
     'db' => [
         'dsn'  => 'mysql:host=127.0.0.1;dbname=hireme;charset=utf8mb4',
         'user' => 'root',
