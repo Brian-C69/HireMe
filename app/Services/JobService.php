@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\JobPosting;
-use App\Core\DB;
+use Illuminate\Database\Capsule\Manager as Capsule;
 
 /**
  * Service layer responsible for job posting business rules.
@@ -28,15 +28,17 @@ final class JobService
             return [0, $errors];
         }
 
-        $pdo = DB::conn();
-        $pdo->beginTransaction();
+        $questionIds = $data['question_ids'];
+        unset($data['question_ids']);
+
         try {
-            $jobId = JobPosting::create($data);
-            JobPosting::attachQuestions($jobId, $data['question_ids']);
-            $pdo->commit();
+            $jobId = Capsule::connection()->transaction(function () use ($data, $questionIds) {
+                $job = JobPosting::create($data);
+                JobPosting::attachQuestions((int)$job->getKey(), $questionIds);
+                return (int)$job->getKey();
+            });
             return [$jobId, []];
         } catch (\Throwable $e) {
-            $pdo->rollBack();
             return [0, ['general' => 'Could not create job.']];
         }
     }
@@ -71,22 +73,21 @@ final class JobService
 
         $now = date('Y-m-d H:i:s');
         $data = [
-            'cid'     => $companyId,
-            'rid'     => ($role === 'Recruiter' ? $userId : null),
-            'title'   => $title,
-            'desc'    => $desc,
-            'reqs'    => null,
-            'loc'     => $loc ?: null,
-            'langs'   => $langs ?: null,
-            'etype'   => $empType ?: 'Full-time',
-            'smin'    => ($salary === '' ? null : number_format((float)$salary, 2, '.', '')),
-            'posted'  => $now,
-            'ca'      => $now,
-            'ua'      => $now,
-            'question_ids' => $chosen,
+            'company_id'      => $companyId,
+            'recruiter_id'    => ($role === 'Recruiter' ? $userId : null),
+            'job_title'       => $title,
+            'job_description' => $desc,
+            'job_requirements'=> null,
+            'job_location'    => $loc ?: null,
+            'job_languages'   => $langs ?: null,
+            'employment_type' => $empType ?: 'Full-time',
+            'salary_range_min'=> ($salary === '' ? null : number_format((float)$salary, 2, '.', '')),
+            'date_posted'     => $now,
+            'created_at'      => $now,
+            'updated_at'      => $now,
+            'question_ids'    => $chosen,
         ];
 
         return [$data, $errors];
     }
 }
-
