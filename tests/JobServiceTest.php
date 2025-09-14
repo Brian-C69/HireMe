@@ -15,10 +15,19 @@ spl_autoload_register(function (string $class): void {
 });
 
 use App\Services\JobService;
-use App\Core\DB;
+use Illuminate\Database\Capsule\Manager as Capsule;
 
 // set up an in-memory sqlite database for testing
-$pdo = new PDO('sqlite::memory:');
+$capsule = new Capsule();
+$capsule->addConnection([
+    'driver' => 'sqlite',
+    'database' => ':memory:',
+    'prefix' => '',
+]);
+$capsule->setAsGlobal();
+$capsule->bootEloquent();
+
+$pdo = $capsule->getConnection()->getPdo();
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $pdo->exec('CREATE TABLE job_postings (
     job_posting_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,12 +51,9 @@ $pdo->exec('CREATE TABLE job_postings (
     updated_at TEXT
 );');
 $pdo->exec('CREATE TABLE job_micro_questions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_posting_id INTEGER,
     question_id INTEGER
 );');
-
-DB::setConnection($pdo);
 
 $service = new JobService();
 [$jobId, $errors] = $service->create('Employer', 1, [
@@ -62,4 +68,3 @@ assert(empty($errors), 'No validation errors expected');
 assert($jobId === 1, 'Job ID should be 1');
 
 echo "JobService tests passed\n";
-
