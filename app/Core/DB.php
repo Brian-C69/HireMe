@@ -11,6 +11,16 @@ final class DB
 {
     private static ?PDO $pdo = null;
 
+    /**
+     * Allow tests or services to override the active PDO connection.
+     * This enables using in-memory databases during testing while the
+     * application continues to retrieve connections via DB::conn().
+     */
+    public static function setConnection(PDO $pdo): void
+    {
+        self::$pdo = $pdo;
+    }
+
     public static function conn(): PDO
     {
         if (self::$pdo instanceof PDO) return self::$pdo;
