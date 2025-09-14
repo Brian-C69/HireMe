@@ -6,6 +6,7 @@ namespace App\Controllers;
 
 use App\Core\Auth;
 use App\Core\DB;
+use App\Services\JobService;
 use PDO;
 
 final class JobController
@@ -99,95 +100,18 @@ final class JobController
             $this->flash('danger', 'Invalid session.');
             $this->redirect('/jobs/create');
         }
-        $pdo    = DB::conn();
-        $role    = $_SESSION['user']['role'] ?? '';
-        $userId  = (int)($_SESSION['user']['id'] ?? 0);
 
-        // Inputs
-        $title   = trim((string)($_POST['job_title'] ?? ''));
-        $desc    = trim((string)($_POST['job_description'] ?? ''));
-        $loc     = trim((string)($_POST['job_location'] ?? ''));
-        $langs   = trim((string)($_POST['job_languages'] ?? ''));
-        $salary  = (string)($_POST['salary'] ?? '');
-        $empType = trim((string)($_POST['employment_type'] ?? 'Full-time'));
+        $role   = $_SESSION['user']['role'] ?? '';
+        $userId = (int)($_SESSION['user']['id'] ?? 0);
 
-        // Company selection for Recruiter
-        $companyId = ($role === 'Employer')
-            ? $userId
-            : (int)($_POST['company_id'] ?? 0);
-
-        if ($role === 'Recruiter') {
-            if ($companyId <= 0) $errors['company_id'] = 'Please select a company.';
-
-            // Ownership check
-            if ($companyId > 0) {
-                $chk = $pdo->prepare("SELECT 1 FROM employers WHERE employer_id=:id AND is_client_company=1 AND created_by_recruiter_id=:rid");
-                $chk->execute([':id' => $companyId, ':rid' => $userId]);
-                if (!$chk->fetchColumn()) {
-                    $errors['company_id'] = 'Invalid company selection.';
-                }
-            }
-        }
-
-        // exactly 3 micro-questions
-        $chosen = array_values(array_filter((array)($_POST['mi_questions'] ?? []), fn($v) => ctype_digit((string)$v)));
-        $chosen = array_unique(array_map('intval', $chosen));
-
-        // Validation
-        $errors = [];
-        if ($title === '') $errors['job_title'] = 'Job title is required.';
-        if ($desc  === '') $errors['job_description'] = 'Description is required.';
-        if ($salary !== '' && !is_numeric($salary)) $errors['salary'] = 'Salary must be numeric (e.g., 3500).';
-        if ($role === 'Recruiter' && $companyId <= 0) $errors['company_id'] = 'Please select a company.';
-        if (count($chosen) !== 3) $errors['mi_questions'] = 'Please select exactly 3 questions.';
+        $service = new JobService();
+        [$jobId, $errors] = $service->create($role, $userId, $_POST);
 
         if ($errors) {
             $this->setErrors($errors);
             $this->setOld($_POST);
-            $this->redirect('/jobs/create');
-        }
-
-        $pdo = DB::conn();
-        $now = date('Y-m-d H:i:s');
-
-        $pdo->beginTransaction();
-        try {
-            $sql = "INSERT INTO job_postings
-                (company_id, recruiter_id, job_title, job_description, job_requirements, job_location, job_languages,
-                 employment_type, salary_range_min, salary_range_max, application_deadline, date_posted, status,
-                 number_of_positions, required_experience, education_level, created_at, updated_at)
-                VALUES
-                (:cid, :rid, :title, :desc, :reqs, :loc, :langs,
-                 :etype, :smin, NULL, NULL, :posted, 'Open',
-                 1, NULL, NULL, :ca, :ua)";
-            $st = $pdo->prepare($sql);
-            $st->execute([
-                ':cid'    => $companyId,
-                ':rid'    => ($role === 'Recruiter' ? $userId : null),
-                ':title'  => $title,
-                ':desc'   => $desc,
-                ':reqs'   => null,
-                ':loc'    => $loc ?: null,
-                ':langs'  => $langs ?: null,
-                ':etype'  => $empType ?: 'Full-time',
-                ':smin'   => ($salary === '' ? null : number_format((float)$salary, 2, '.', '')),
-                ':posted' => $now,
-                ':ca'     => $now,
-                ':ua'     => $now,
-            ]);
-
-            $jobId = (int)$pdo->lastInsertId();
-
-            // attach 3 questions
-            $ins = $pdo->prepare("INSERT INTO job_micro_questions (job_posting_id, question_id) VALUES (:jid, :qid)");
-            foreach ($chosen as $qid) {
-                $ins->execute([':jid' => $jobId, ':qid' => $qid]);
-            }
-
-            $pdo->commit();
-        } catch (\Throwable $e) {
-            $pdo->rollBack();
-            $this->flash('danger', 'Could not create job.');
+            $msg = $errors['general'] ?? 'Please fix the errors below.';
+            $this->flash('danger', $msg);
             $this->redirect('/jobs/create');
         }
 
