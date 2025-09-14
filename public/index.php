@@ -1,28 +1,6 @@
 <?php
 
 declare(strict_types=1);
-$vendor = dirname(__DIR__) . '/vendor/autoload.php';
-if (is_file($vendor)) {
-    require $vendor;
-}
-ini_set('display_errors', '1');
-error_reporting(E_ALL);
-date_default_timezone_set('Asia/Kuala_Lumpur');
-session_start();
-
-// Compute BASE_URL for subfolder installs (e.g. /HireMe/public)
-define('BASE_URL', rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/') ?: '');
-
-// PSR-4 autoloader for App\
-spl_autoload_register(function (string $class): void {
-    $prefix  = 'App\\';
-    $baseDir = dirname(__DIR__) . '/app/';
-    $len     = strlen($prefix);
-    if (strncmp($prefix, $class, $len) !== 0) return;
-    $relative = substr($class, $len);
-    $file     = $baseDir . str_replace('\\', '/', $relative) . '.php';
-    if (is_file($file)) require $file;
-});
 
 use App\Core\Router;
 use App\Controllers\HomeController;
@@ -36,6 +14,8 @@ use App\Controllers\ApplicationController;
 use App\Controllers\PaymentController;
 use App\Controllers\RecruiterCompaniesController;
 use App\Controllers\AdminController;
+
+$container = require dirname(__DIR__) . '/bootstrap.php';
 
 $router = new Router();
 
