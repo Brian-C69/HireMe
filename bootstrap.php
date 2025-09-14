@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Core\Container;
 use App\Core\DB;
 use App\Core\Middleware;
+use Illuminate\Database\Capsule\Manager as Capsule;
 
 $root = __DIR__;
 
@@ -81,9 +82,14 @@ define('BASE_URL', rtrim(str_replace('\\\\', '/', dirname($_SERVER['SCRIPT_NAME'
 // -----------------------------------------------------------------------------
 // Dependency container & ORM initialisation
 // -----------------------------------------------------------------------------
+$capsule = new Capsule();
+$capsule->addConnection(require $root . '/config/database.php');
+$capsule->setAsGlobal();
+$capsule->bootEloquent();
 $container = new Container();
 $container->set('config', $config);
 $container->set('db', DB::conn());
+$container->set('orm', $capsule);
 
 // Shared middleware registry (none yet but ready for expansion)
 Middleware::run();
