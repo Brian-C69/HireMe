@@ -2,7 +2,8 @@
     "require": {
         "stripe/stripe-php": "^17.6",
         "illuminate/database": "^11.0",
-        "illuminate/events": "^11.0"
+        "illuminate/events": "^11.0",
+        "guzzlehttp/guzzle": "^7.0"
     },
     "autoload": {
         "psr-4": {
