@@ -14,6 +14,7 @@ use App\Controllers\ApplicationController;
 use App\Controllers\PaymentController;
 use App\Controllers\RecruiterCompaniesController;
 use App\Controllers\AdminController;
+use App\Controllers\AccountController;
 
 $container = require dirname(__DIR__) . '/app/bootstrap.php';
 
@@ -188,6 +189,10 @@ $router->get('/admin/metrics',  [\App\Controllers\AdminController::class, 'overv
 $router->get('/admin/metrics/export', [\App\Controllers\AdminController::class, 'metricsExport']); // CSV
 
 $router->get('/admin/overview/export-all', [\App\Controllers\AdminController::class, 'overviewExportAll']);
+
+// API: Accounts
+$router->get('/api/accounts/{id}', [AccountController::class, 'apiShow']);
+$router->post('/api/accounts', [AccountController::class, 'apiCreate']);
 
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
