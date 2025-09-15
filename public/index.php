@@ -15,7 +15,7 @@ use App\Controllers\PaymentController;
 use App\Controllers\RecruiterCompaniesController;
 use App\Controllers\AdminController;
 
-$container = require dirname(__DIR__) . '/bootstrap.php';
+$container = require dirname(__DIR__) . '/app/bootstrap.php';
 
 $router = new Router();
 

@@ -7,7 +7,8 @@ use App\Core\DB;
 use App\Core\Middleware;
 use Illuminate\Database\Capsule\Manager as Capsule;
 
-$root = __DIR__;
+// Base directory of the project
+$root = dirname(__DIR__);
 
 // -----------------------------------------------------------------------------
 // Autoloading (Composer + PSR-4 for App\)
@@ -17,9 +18,10 @@ if (is_file($vendor)) {
     require $vendor;
 }
 
+// Fallback PSR-4 autoloader for the App namespace
 spl_autoload_register(function (string $class): void {
     $prefix  = 'App\\';
-    $baseDir = __DIR__ . '/app/';
+    $baseDir = __DIR__ . '/';
     $len     = strlen($prefix);
     if (strncmp($prefix, $class, $len) !== 0) return;
     $relative = substr($class, $len);
@@ -91,6 +93,7 @@ $capsule = new Capsule();
 $capsule->addConnection(require $root . '/config/database.php');
 $capsule->setAsGlobal();
 $capsule->bootEloquent();
+
 $container = new Container();
 $container->set('config', $config);
 $container->set('db', DB::conn());
@@ -100,3 +103,4 @@ $container->set('orm', $capsule);
 Middleware::run();
 
 return $container;
+
