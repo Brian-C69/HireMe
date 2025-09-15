@@ -5,8 +5,7 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Core\Auth;
-use App\Core\DB;
-use PDO;
+use App\Models\Employer;
 use Throwable;
 
 final class EmployerController
@@ -57,11 +56,8 @@ final class EmployerController
         $errors = $this->takeErrors();
         $old = $this->takeOld();
 
-        $pdo = DB::conn();
         $id = (int)($_SESSION['user']['id'] ?? 0);
-        $st = $pdo->prepare("SELECT * FROM employers WHERE employer_id = :id LIMIT 1");
-        $st->execute([':id' => $id]);
-        $employer = $st->fetch() ?: [];
+        $employer = Employer::find($id);
 
         require $root . '/app/Views/layout.php';
     }
@@ -75,11 +71,8 @@ final class EmployerController
             $this->redirect('/company');
         }
 
-        $pdo = DB::conn();
         $id = (int)($_SESSION['user']['id'] ?? 0);
-        $st = $pdo->prepare("SELECT * FROM employers WHERE employer_id = :id LIMIT 1");
-        $st->execute([':id' => $id]);
-        $emp = $st->fetch();
+        $emp = Employer::find($id);
         if (!$emp) {
             $this->flash('danger', 'Employer not found.');
             $this->redirect('/company');
@@ -126,8 +119,9 @@ final class EmployerController
                 $this->redirect('/company');
             }
 
-            $pdo->prepare("UPDATE employers SET company_logo=:logo, updated_at=:ua WHERE employer_id=:id")
-                ->execute([':logo' => $logoUrl, ':ua' => $now, ':id' => $id]);
+            $emp->company_logo = $logoUrl;
+            $emp->updated_at = $now;
+            $emp->save();
 
             $this->flash('success', 'Company logo updated.');
             $this->redirect('/company');
@@ -158,15 +152,8 @@ final class EmployerController
             'company_description' => $description ?: null,
             'updated_at' => $now,
         ];
-        $set = [];
-        $p = [];
-        foreach ($fields as $k => $v) {
-            $set[] = "$k = :$k";
-            $p[":$k"] = $v;
-        }
-        $p[':id'] = $id;
-
-        $pdo->prepare("UPDATE employers SET " . implode(', ', $set) . " WHERE employer_id=:id")->execute($p);
+        $emp->fill($fields);
+        $emp->save();
 
         $this->flash('success', 'Company profile updated.');
         $this->redirect('/company');
