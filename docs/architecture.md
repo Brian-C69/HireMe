@@ -46,6 +46,49 @@ Major features are implemented through dedicated controllers:
 Controllers may delegate complex logic to service classes in `app/Services` and
 persist data through Eloquent models found under `app/Models`.
 
+### Operation steps
+
+Each feature follows a model–view–controller cycle:
+
+1. **Model** – an Eloquent model interacts with the database.
+2. **Controller** – the controller method invokes the model and prepares data.
+3. **View** – a PHP template renders HTML (or JSON for API calls).
+
+For example:
+
+- **Authentication** – the `User` model verifies credentials, `AuthController`
+  calls it and passes errors or the user object to views under
+  `app/Views/auth/`.
+- **Jobs** – `JobPosting` persists job data, `JobController` loads the
+  collection and renders job lists and forms in `app/Views/jobs/`.
+- **Applications** – the `Application` model stores submissions, while
+  `ApplicationController` shows forms or status pages in
+  `app/Views/applications/`.
+- **Profiles** – `Candidate` and `Employer` models hold profile information;
+  their respective controllers send the data to views in `app/Views/profile/`.
+- **Payments** – `Payment` and `StripePayment` models record transactions;
+  `PaymentController` handles purchase requests and returns receipts via views
+  in `app/Views/payments/`.
+- **Administration** – `Admin` models expose metrics and CRUD operations; the
+  `AdminController` renders administrative tables and forms in
+  `app/Views/admin/`.
+
+## Object-Relational Mapping
+
+Models extend `App\Models\BaseModel`, which in turn extends Laravel's
+`Illuminate\Database\Eloquent\Model`.  This provides an Active Record style
+ORM: models map directly to database tables, offer query-builder methods like
+`find`, `create`, and relationship helpers, and automatically serialize records
+to arrays or JSON.
+
+## Web Services (REST API)
+
+Besides HTML pages, HireMe exposes a REST-style API under `/api/*` routes.
+`public/index.php` registers endpoints such as `/api/users/{type}` and
+`/api/accounts/{type}`.  `UserController` and `AccountController` respond to
+HTTP verbs (`GET`, `POST`) and return JSON.  Controllers retrieve data through
+the same Eloquent models and send responses via `echo` with the appropriate
+`Content-Type` header.
 
 ## Views and Layout
 
