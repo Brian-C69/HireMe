@@ -46,6 +46,7 @@ Major features are implemented through dedicated controllers:
 Controllers may delegate complex logic to service classes in `app/Services` and
 persist data through Eloquent models found under `app/Models`.
 
+
 ## Views and Layout
 
 Views live in `app/Views` and are simple PHP templates.  Controllers set a
