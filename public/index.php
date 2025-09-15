@@ -191,8 +191,8 @@ $router->get('/admin/metrics/export', [\App\Controllers\AdminController::class, 
 $router->get('/admin/overview/export-all', [\App\Controllers\AdminController::class, 'overviewExportAll']);
 
 // API: Accounts
-$router->get('/api/accounts/{id}', [AccountController::class, 'apiShow']);
-$router->post('/api/accounts', [AccountController::class, 'apiCreate']);
+$router->get('/api/accounts/{type}/{id}', [AccountController::class, 'apiShow']);
+$router->post('/api/accounts/{type}', [AccountController::class, 'apiCreate']);
 
 // Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
 $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
