@@ -15,6 +15,7 @@ use App\Controllers\PaymentController;
 use App\Controllers\RecruiterCompaniesController;
 use App\Controllers\AdminController;
 use App\Controllers\AccountController;
+use App\Controllers\UserController;
 
 $container = require dirname(__DIR__) . '/app/bootstrap.php';
 
@@ -189,6 +190,11 @@ $router->get('/admin/metrics',  [\App\Controllers\AdminController::class, 'overv
 $router->get('/admin/metrics/export', [\App\Controllers\AdminController::class, 'metricsExport']); // CSV
 
 $router->get('/admin/overview/export-all', [\App\Controllers\AdminController::class, 'overviewExportAll']);
+
+// API: Users
+$router->get('/api/users/{type}', [UserController::class, 'index']);
+$router->get('/api/users/{type}/{id}', [UserController::class, 'show']);
+$router->post('/api/users/{type}', [UserController::class, 'store']);
 
 // API: Accounts
 $router->get('/api/accounts/{id}', [AccountController::class, 'apiShow']);
