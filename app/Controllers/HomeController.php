@@ -4,29 +4,39 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Core\Request;
+
 final class HomeController
 {
-    public function index(array $params = []): void
+    private function renderLayout(string $title, string $viewFile): string
     {
-        $root     = dirname(__DIR__, 2);
-        $title    = 'HireMe — Hiring in Malaysia, simplified.';
+        $root = dirname(__DIR__, 2);
+        ob_start();
+        require $root . '/app/Views/layout.php';
+        return (string) ob_get_clean();
+    }
+
+    public function index(Request $request): string
+    {
+        $root = dirname(__DIR__, 2);
+        $title = 'HireMe — Hiring in Malaysia, simplified.';
         $viewFile = $root . '/app/Views/home.php';
-        require $root . '/app/Views/layout.php';
+        return $this->renderLayout($title, $viewFile);
     }
 
-    public function privacy(array $params = []): void
+    public function privacy(Request $request): string
     {
-        $root     = dirname(__DIR__, 2);
-        $title    = 'Privacy Policy — HireMe';
+        $root = dirname(__DIR__, 2);
+        $title = 'Privacy Policy — HireMe';
         $viewFile = $root . '/app/Views/privacy.php';
-        require $root . '/app/Views/layout.php';
+        return $this->renderLayout($title, $viewFile);
     }
 
-    public function terms(array $params = []): void
+    public function terms(Request $request): string
     {
-        $root     = dirname(__DIR__, 2);
-        $title    = 'Terms of Service — HireMe';
+        $root = dirname(__DIR__, 2);
+        $title = 'Terms of Service — HireMe';
         $viewFile = $root . '/app/Views/terms.php';
-        require $root . '/app/Views/layout.php';
+        return $this->renderLayout($title, $viewFile);
     }
 }

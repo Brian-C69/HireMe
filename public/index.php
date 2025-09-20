@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Core\Request;
 use App\Core\Router;
 use App\Controllers\HomeController;
 use App\Controllers\AuthController;
@@ -200,12 +201,6 @@ $router->post('/api/users/{type}', [UserController::class, 'store']);
 $router->get('/api/accounts/{type}/{id}', [AccountController::class, 'apiShow']);
 $router->post('/api/accounts/{type}', [AccountController::class, 'apiCreate']);
 
-// Normalize path relative to BASE_URL (avoid str_starts_with for PHP 7+)
-$method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-$uriPath = str_replace('\\', '/', parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/');
-$base    = defined('BASE_URL') ? BASE_URL : '';
-$path    = ($base && substr($uriPath, 0, strlen($base)) === $base) ? substr($uriPath, strlen($base)) : $uriPath;
-$path    = rtrim($path, '/') ?: '/';
-if ($path === '/index.php') $path = '/';
-
-$router->dispatch($method, $path);
+$request = Request::fromGlobals(defined('BASE_URL') ? BASE_URL : null);
+$response = $router->dispatch($request, $container);
+$response->send();
