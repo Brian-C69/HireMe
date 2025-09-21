@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Core;
 
 use App\Core\Contracts\Middleware as MiddlewareContract;
@@ -11,13 +13,11 @@ use ReflectionIntersectionType;
 use ReflectionMethod;
 use ReflectionNamedType;
 use ReflectionParameter;
-
 use ReflectionType;
-
 use ReflectionUnionType;
 use RuntimeException;
 
-class Router
+final class Router
 {
     /** @var array<int, array<string, mixed>> */
     private array $routes = [];
@@ -31,8 +31,12 @@ class Router
     public function group(array $attributes, callable $callback): void
     {
         $this->groupStack[] = $this->mergeGroupAttributes($attributes);
-        $callback($this);
-        array_pop($this->groupStack);
+
+        try {
+            $callback($this);
+        } finally {
+            array_pop($this->groupStack);
+        }
     }
 
     public function get(string $uri, callable|array|string $action, array $options = []): void
@@ -81,7 +85,7 @@ class Router
 
         $this->routes[] = $route;
 
-        if ($route['name']) {
+        if ($route['name'] !== null) {
             $this->namedRoutes[$route['name']] = $route;
         }
     }
@@ -118,149 +122,73 @@ class Router
 
         $uri = $this->namedRoutes[$name]['uri'];
         foreach ($parameters as $key => $value) {
-            $uri = str_replace('{' . $key . '}', $value, $uri);
+            $uri = str_replace('{' . $key . '}', (string) $value, $uri);
         }
 
         return $uri;
     }
 
+    /**
+     * @param array<string, mixed> $route
+     * @param array<string, string> $parameters
+     */
     private function runRoute(array $route, array $parameters, Request $request, Container $container): Response
     {
-        $response = $this->runMiddlewarePipeline(
-            $route['middleware'],
-            $request,
-            function (Request $request) use ($route, $parameters, $container) {
-                $callable = $this->resolveAction($route['action'], $container);
+        $destination = function (Request $request) use ($route, $parameters, $container): Response {
+            $callable = $this->resolveAction($route['action'], $container);
+            $arguments = $this->resolveActionArguments($callable, $parameters, $request);
+            $result = $callable(...$arguments);
 
-                $arguments = $this->buildActionArguments($callable, $parameters, $request);
+            return $this->prepareResponse($result, $request, $route);
+        };
 
-                $arguments = $this->resolveActionArguments($callable, $parameters, $request);
+        return $this->runMiddlewarePipeline($route['middleware'], $request, $destination, $container);
+    }
 
-                $result = $callable(...$arguments);
+    private function resolveAction(callable|array|string $action, Container $container): callable
+    {
+        if (is_callable($action)) {
+            return $action;
+        }
 
-                return $this->prepareResponse($result, $request, $route);
-            },
-            $container
-        );
+        if (is_array($action) && count($action) === 2) {
+            [$class, $method] = $action;
+            $controller = is_string($class) ? $container->make($class) : $class;
 
-        return $response;
+            if ($controller instanceof Controller) {
+                $controller->setContainer($container);
+            }
+
+            return [$controller, $method];
+        }
+
+        if (is_string($action) && str_contains($action, '@')) {
+            [$class, $method] = explode('@', $action, 2);
+            $controller = $container->make($class);
+
+            if ($controller instanceof Controller) {
+                $controller->setContainer($container);
+            }
+
+            return [$controller, $method];
+        }
+
+        throw new RuntimeException('Invalid route action.');
     }
 
     /**
-
-     * Determine the arguments that should be passed to a resolved action.
-     *
-     * @param array<string, string> $routeParameters
-     * @return array<int, mixed>
-     */
-    private function buildActionArguments(callable $callable, array $routeParameters, Request $request): array
-    {
-        $reflection = $this->reflectCallable($callable);
-        $parameters = $reflection->getParameters();
-        $arguments = [];
-        $routeValues = array_values($routeParameters);
-
-        if ($parameters === []) {
-            return $routeValues;
-        }
-
-        $first = $parameters[0];
-
-        if ($this->parameterAcceptsRequest($first)) {
-            $arguments[] = $request;
-
-            return array_merge($arguments, $routeValues);
-        }
-
-        if ($this->parameterExpectsParamsArray($first)) {
-            $arguments[] = $routeParameters;
-
-            if (count($parameters) > 1) {
-                $arguments = array_merge($arguments, $routeValues);
-            }
-
-            return $arguments;
-        }
-
-        return $routeValues;
-    }
-
-    private function reflectCallable(callable $callable): ReflectionFunctionAbstract
-    {
-        if (is_array($callable)) {
-            return new ReflectionMethod($callable[0], $callable[1]);
-        }
-
-        if (is_string($callable) && str_contains($callable, '::')) {
-            return new ReflectionMethod($callable);
-        }
-
-        if ($callable instanceof Closure) {
-            return new ReflectionFunction($callable);
-        }
-
-        if (is_object($callable)) {
-            return new ReflectionMethod($callable, '__invoke');
-        }
-
-        return new ReflectionFunction($callable);
-    }
-
-    private function parameterAcceptsRequest(ReflectionParameter $parameter): bool
-    {
-        $type = $parameter->getType();
-        if ($type === null) {
-            return false;
-        }
-
-        return $this->typeIncludesRequest($type);
-    }
-
-    private function parameterExpectsParamsArray(ReflectionParameter $parameter): bool
-    {
-        $type = $parameter->getType();
-        if ($type !== null && $this->typeAllowsArray($type)) {
-            return true;
-        }
-
-        if ($parameter->isDefaultValueAvailable() && is_array($parameter->getDefaultValue())) {
-            return true;
-        }
-
-        $name = $parameter->getName();
-
-        return in_array($name, ['params', 'parameters'], true);
-    }
-
-    private function typeIncludesRequest(ReflectionType $type): bool
-    {
-        if ($type instanceof ReflectionNamedType) {
-            if ($type->isBuiltin()) {
-                return false;
-            }
-
-            return is_a($type->getName(), Request::class, true);
-        }
-
-        if ($type instanceof ReflectionUnionType) {
-            foreach ($type->getTypes() as $inner) {
-                if ($this->typeIncludesRequest($inner)) {
-
-     * @param callable $callable
-     * @param array<string, mixed> $parameters
+     * @param array<string, string> $parameters
      * @return array<int, mixed>
      */
     private function resolveActionArguments(callable $callable, array $parameters, Request $request): array
     {
         $reflection = $this->reflectCallable($callable);
-        $routeValues = array_values($parameters);
-
         if ($reflection === null) {
-            return $routeValues;
+            return array_values($parameters);
         }
 
         $arguments = [];
-        $remaining = $routeValues;
+        $remaining = array_values($parameters);
         $paramsArrayProvided = false;
 
         foreach ($reflection->getParameters() as $parameter) {
@@ -329,27 +257,47 @@ class Router
     {
         $type = $parameter->getType();
 
+        if ($type === null) {
+            return false;
+        }
+
+        return $this->typeIncludesRequest($type);
+    }
+
+    private function parameterExpectsParamsArray(ReflectionParameter $parameter): bool
+    {
+        $type = $parameter->getType();
+
+        if ($type !== null && $this->typeAllowsArray($type)) {
+            return true;
+        }
+
+        if ($parameter->isDefaultValueAvailable() && is_array($parameter->getDefaultValue())) {
+            return true;
+        }
+
+        $name = $parameter->getName();
+
+        return in_array($name, ['params', 'parameters'], true);
+    }
+
+    private function typeIncludesRequest(ReflectionType $type): bool
+    {
         if ($type instanceof ReflectionNamedType) {
             return $this->typeMatchesRequest($type);
         }
 
         if ($type instanceof ReflectionUnionType) {
-            foreach ($type->getTypes() as $named) {
-                if ($named instanceof ReflectionNamedType && $this->typeMatchesRequest($named)) {
-
+            foreach ($type->getTypes() as $inner) {
+                if ($this->typeIncludesRequest($inner)) {
                     return true;
                 }
             }
         }
 
         if ($type instanceof ReflectionIntersectionType) {
-
             foreach ($type->getTypes() as $inner) {
                 if ($this->typeIncludesRequest($inner)) {
-
-            foreach ($type->getTypes() as $named) {
-                if ($named instanceof ReflectionNamedType && $this->typeMatchesRequest($named)) {
-
                     return true;
                 }
             }
@@ -358,27 +306,15 @@ class Router
         return false;
     }
 
-
     private function typeAllowsArray(ReflectionType $type): bool
     {
-
-    private function parameterExpectsParamsArray(ReflectionParameter $parameter): bool
-    {
-        $type = $parameter->getType();
-
-
         if ($type instanceof ReflectionNamedType) {
             return $type->isBuiltin() && $type->getName() === 'array';
         }
 
         if ($type instanceof ReflectionUnionType) {
-
             foreach ($type->getTypes() as $inner) {
                 if ($this->typeAllowsArray($inner)) {
-
-            foreach ($type->getTypes() as $named) {
-                if ($named instanceof ReflectionNamedType && $named->isBuiltin() && $named->getName() === 'array') {
-
                     return true;
                 }
             }
@@ -386,8 +322,6 @@ class Router
 
         return false;
     }
-
-
 
     private function typeMatchesRequest(ReflectionNamedType $type): bool
     {
@@ -404,21 +338,23 @@ class Router
     {
         $pipeline = array_reduce(
             array_reverse($middlewares),
-            function ($next, $middleware) use ($container) {
+            function (callable $next, mixed $middleware) use ($container) {
                 return function (Request $request) use ($next, $middleware, $container) {
+                    $instance = $middleware;
                     $parameters = [];
+
                     if (is_string($middleware)) {
                         if (str_contains($middleware, ':')) {
                             [$middlewareClass, $parameterString] = explode(':', $middleware, 2);
                             $middleware = $middlewareClass;
                             $parameters = $parameterString !== '' ? explode(',', $parameterString) : [];
                         }
+
                         $instance = $container->make($middleware);
+
                         if (method_exists($instance, 'setParameters')) {
                             $instance->setParameters($parameters);
                         }
-                    } else {
-                        $instance = $middleware;
                     }
 
                     if ($instance instanceof MiddlewareContract) {
@@ -463,40 +399,16 @@ class Router
         return new Response((string) $result);
     }
 
-    private function resolveAction(callable|array|string $action, Container $container): callable
-    {
-        if (is_callable($action)) {
-            return $action;
-        }
-
-        if (is_array($action) && count($action) === 2) {
-            [$class, $method] = $action;
-            $controller = is_string($class) ? $container->make($class) : $class;
-            if ($controller instanceof Controller) {
-                $controller->setContainer($container);
-            }
-            return [$controller, $method];
-        }
-
-        if (is_string($action) && str_contains($action, '@')) {
-            [$class, $method] = explode('@', $action);
-            $controller = $container->make($class);
-            if ($controller instanceof Controller) {
-                $controller->setContainer($container);
-            }
-
-            return [$controller, $method];
-        }
-
-        throw new RuntimeException('Invalid route action.');
-    }
-
     private function compileRoute(string $uri): string
     {
         $pattern = preg_replace('#\{([^}/]+)\}#', '(?P<$1>[^/]+)', rtrim($uri, '/') ?: '/');
         return '#^' . $pattern . '$#';
     }
 
+    /**
+     * @param array<int|string, string> $matches
+     * @return array<string, string>
+     */
     private function extractParameters(array $matches): array
     {
         $parameters = [];
@@ -528,9 +440,11 @@ class Router
             $merged['middleware'],
             $this->normalizeMiddleware($attributes['middleware'] ?? [])
         );
+
         if (isset($attributes['prefix'])) {
             $merged['prefix'] .= $attributes['prefix'];
         }
+
         $merged['as'] = $this->concatenateName($merged['as'], $attributes['as'] ?? null);
         $merged['json'] = $merged['json'] || ($attributes['json'] ?? false);
         $merged['middleware'] = $this->uniqueMiddleware($merged['middleware']);
@@ -560,7 +474,7 @@ class Router
         }
 
         if ($name === null) {
-            return $prefix ?: null;
+            return $prefix !== '' ? $prefix : null;
         }
 
         return $prefix . $name;
@@ -568,11 +482,11 @@ class Router
 
     private function concatenateName(?string $base, ?string $append): ?string
     {
-        if (!$base) {
+        if ($base === null || $base === '') {
             return $append;
         }
 
-        if (!$append) {
+        if ($append === null || $append === '') {
             return $base;
         }
 
@@ -611,6 +525,7 @@ class Router
                 if (isset($seenStrings[$item])) {
                     continue;
                 }
+
                 $seenStrings[$item] = true;
             }
 
