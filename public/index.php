@@ -17,6 +17,7 @@ use App\Controllers\RecruiterCompaniesController;
 use App\Controllers\AdminController;
 use App\Controllers\AccountController;
 use App\Controllers\UserController;
+use App\Controllers\Api\ResourceController;
 
 $container = require dirname(__DIR__) . '/app/bootstrap.php';
 
@@ -200,6 +201,14 @@ $router->post('/api/users/{type}', [UserController::class, 'store']);
 // API: Accounts
 $router->get('/api/accounts/{type}/{id}', [AccountController::class, 'apiShow']);
 $router->post('/api/accounts/{type}', [AccountController::class, 'apiCreate']);
+
+// API: Generic CRUD exposure
+$router->get('/api/{resource}', [ResourceController::class, 'index'], ['json' => true]);
+$router->get('/api/{resource}/{id}', [ResourceController::class, 'show'], ['json' => true]);
+$router->post('/api/{resource}', [ResourceController::class, 'store'], ['json' => true]);
+$router->put('/api/{resource}/{id}', [ResourceController::class, 'update'], ['json' => true]);
+$router->patch('/api/{resource}/{id}', [ResourceController::class, 'update'], ['json' => true]);
+$router->delete('/api/{resource}/{id}', [ResourceController::class, 'destroy'], ['json' => true]);
 
 $request = Request::fromGlobals(defined('BASE_URL') ? BASE_URL : null);
 $response = $router->dispatch($request, $container);
