@@ -11,6 +11,9 @@ use ReflectionIntersectionType;
 use ReflectionMethod;
 use ReflectionNamedType;
 use ReflectionParameter;
+
+use ReflectionType;
+
 use ReflectionUnionType;
 use RuntimeException;
 
@@ -128,7 +131,11 @@ class Router
             $request,
             function (Request $request) use ($route, $parameters, $container) {
                 $callable = $this->resolveAction($route['action'], $container);
+
+                $arguments = $this->buildActionArguments($callable, $parameters, $request);
+
                 $arguments = $this->resolveActionArguments($callable, $parameters, $request);
+
                 $result = $callable(...$arguments);
 
                 return $this->prepareResponse($result, $request, $route);
@@ -140,6 +147,105 @@ class Router
     }
 
     /**
+
+     * Determine the arguments that should be passed to a resolved action.
+     *
+     * @param array<string, string> $routeParameters
+     * @return array<int, mixed>
+     */
+    private function buildActionArguments(callable $callable, array $routeParameters, Request $request): array
+    {
+        $reflection = $this->reflectCallable($callable);
+        $parameters = $reflection->getParameters();
+        $arguments = [];
+        $routeValues = array_values($routeParameters);
+
+        if ($parameters === []) {
+            return $routeValues;
+        }
+
+        $first = $parameters[0];
+
+        if ($this->parameterAcceptsRequest($first)) {
+            $arguments[] = $request;
+
+            return array_merge($arguments, $routeValues);
+        }
+
+        if ($this->parameterExpectsParamsArray($first)) {
+            $arguments[] = $routeParameters;
+
+            if (count($parameters) > 1) {
+                $arguments = array_merge($arguments, $routeValues);
+            }
+
+            return $arguments;
+        }
+
+        return $routeValues;
+    }
+
+    private function reflectCallable(callable $callable): ReflectionFunctionAbstract
+    {
+        if (is_array($callable)) {
+            return new ReflectionMethod($callable[0], $callable[1]);
+        }
+
+        if (is_string($callable) && str_contains($callable, '::')) {
+            return new ReflectionMethod($callable);
+        }
+
+        if ($callable instanceof Closure) {
+            return new ReflectionFunction($callable);
+        }
+
+        if (is_object($callable)) {
+            return new ReflectionMethod($callable, '__invoke');
+        }
+
+        return new ReflectionFunction($callable);
+    }
+
+    private function parameterAcceptsRequest(ReflectionParameter $parameter): bool
+    {
+        $type = $parameter->getType();
+        if ($type === null) {
+            return false;
+        }
+
+        return $this->typeIncludesRequest($type);
+    }
+
+    private function parameterExpectsParamsArray(ReflectionParameter $parameter): bool
+    {
+        $type = $parameter->getType();
+        if ($type !== null && $this->typeAllowsArray($type)) {
+            return true;
+        }
+
+        if ($parameter->isDefaultValueAvailable() && is_array($parameter->getDefaultValue())) {
+            return true;
+        }
+
+        $name = $parameter->getName();
+
+        return in_array($name, ['params', 'parameters'], true);
+    }
+
+    private function typeIncludesRequest(ReflectionType $type): bool
+    {
+        if ($type instanceof ReflectionNamedType) {
+            if ($type->isBuiltin()) {
+                return false;
+            }
+
+            return is_a($type->getName(), Request::class, true);
+        }
+
+        if ($type instanceof ReflectionUnionType) {
+            foreach ($type->getTypes() as $inner) {
+                if ($this->typeIncludesRequest($inner)) {
+
      * @param callable $callable
      * @param array<string, mixed> $parameters
      * @return array<int, mixed>
@@ -230,14 +336,20 @@ class Router
         if ($type instanceof ReflectionUnionType) {
             foreach ($type->getTypes() as $named) {
                 if ($named instanceof ReflectionNamedType && $this->typeMatchesRequest($named)) {
+
                     return true;
                 }
             }
         }
 
         if ($type instanceof ReflectionIntersectionType) {
+
+            foreach ($type->getTypes() as $inner) {
+                if ($this->typeIncludesRequest($inner)) {
+
             foreach ($type->getTypes() as $named) {
                 if ($named instanceof ReflectionNamedType && $this->typeMatchesRequest($named)) {
+
                     return true;
                 }
             }
@@ -246,17 +358,27 @@ class Router
         return false;
     }
 
+
+    private function typeAllowsArray(ReflectionType $type): bool
+    {
+
     private function parameterExpectsParamsArray(ReflectionParameter $parameter): bool
     {
         $type = $parameter->getType();
+
 
         if ($type instanceof ReflectionNamedType) {
             return $type->isBuiltin() && $type->getName() === 'array';
         }
 
         if ($type instanceof ReflectionUnionType) {
+
+            foreach ($type->getTypes() as $inner) {
+                if ($this->typeAllowsArray($inner)) {
+
             foreach ($type->getTypes() as $named) {
                 if ($named instanceof ReflectionNamedType && $named->isBuiltin() && $named->getName() === 'array') {
+
                     return true;
                 }
             }
@@ -264,6 +386,8 @@ class Router
 
         return false;
     }
+
+
 
     private function typeMatchesRequest(ReflectionNamedType $type): bool
     {
