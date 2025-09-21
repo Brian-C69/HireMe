@@ -4,13 +4,16 @@ namespace App\Core;
 
 use App\Core\Contracts\Middleware as MiddlewareContract;
 use Closure;
+use ReflectionException;
 use ReflectionFunction;
 use ReflectionFunctionAbstract;
 use ReflectionIntersectionType;
 use ReflectionMethod;
 use ReflectionNamedType;
 use ReflectionParameter;
+
 use ReflectionType;
+
 use ReflectionUnionType;
 use RuntimeException;
 
@@ -128,7 +131,11 @@ class Router
             $request,
             function (Request $request) use ($route, $parameters, $container) {
                 $callable = $this->resolveAction($route['action'], $container);
+
                 $arguments = $this->buildActionArguments($callable, $parameters, $request);
+
+                $arguments = $this->resolveActionArguments($callable, $parameters, $request);
+
                 $result = $callable(...$arguments);
 
                 return $this->prepareResponse($result, $request, $route);
@@ -140,6 +147,7 @@ class Router
     }
 
     /**
+
      * Determine the arguments that should be passed to a resolved action.
      *
      * @param array<string, string> $routeParameters
@@ -237,14 +245,111 @@ class Router
         if ($type instanceof ReflectionUnionType) {
             foreach ($type->getTypes() as $inner) {
                 if ($this->typeIncludesRequest($inner)) {
+
+     * @param callable $callable
+     * @param array<string, mixed> $parameters
+     * @return array<int, mixed>
+     */
+    private function resolveActionArguments(callable $callable, array $parameters, Request $request): array
+    {
+        $reflection = $this->reflectCallable($callable);
+        $routeValues = array_values($parameters);
+
+        if ($reflection === null) {
+            return $routeValues;
+        }
+
+        $arguments = [];
+        $remaining = $routeValues;
+        $paramsArrayProvided = false;
+
+        foreach ($reflection->getParameters() as $parameter) {
+            if ($this->parameterExpectsRequest($parameter)) {
+                $arguments[] = $request;
+                continue;
+            }
+
+            if (!$paramsArrayProvided && $this->parameterExpectsParamsArray($parameter)) {
+                $arguments[] = $parameters;
+                $paramsArrayProvided = true;
+                continue;
+            }
+
+            if ($parameter->isVariadic()) {
+                $arguments = array_merge($arguments, $remaining);
+                $remaining = [];
+                continue;
+            }
+
+            if ($remaining !== []) {
+                $arguments[] = array_shift($remaining);
+                continue;
+            }
+
+            if ($parameter->isDefaultValueAvailable()) {
+                continue;
+            }
+
+            $arguments[] = null;
+        }
+
+        return $arguments;
+    }
+
+    private function reflectCallable(callable $callable): ?ReflectionFunctionAbstract
+    {
+        try {
+            if ($callable instanceof Closure) {
+                return new ReflectionFunction($callable);
+            }
+
+            if (is_array($callable)) {
+                return new ReflectionMethod($callable[0], $callable[1]);
+            }
+
+            if (is_string($callable)) {
+                if (str_contains($callable, '::')) {
+                    return new ReflectionMethod($callable);
+                }
+
+                return new ReflectionFunction($callable);
+            }
+
+            if (is_object($callable) && method_exists($callable, '__invoke')) {
+                return new ReflectionMethod($callable, '__invoke');
+            }
+
+            return new ReflectionFunction(Closure::fromCallable($callable));
+        } catch (ReflectionException) {
+            return null;
+        }
+    }
+
+    private function parameterExpectsRequest(ReflectionParameter $parameter): bool
+    {
+        $type = $parameter->getType();
+
+        if ($type instanceof ReflectionNamedType) {
+            return $this->typeMatchesRequest($type);
+        }
+
+        if ($type instanceof ReflectionUnionType) {
+            foreach ($type->getTypes() as $named) {
+                if ($named instanceof ReflectionNamedType && $this->typeMatchesRequest($named)) {
+
                     return true;
                 }
             }
         }
 
         if ($type instanceof ReflectionIntersectionType) {
+
             foreach ($type->getTypes() as $inner) {
                 if ($this->typeIncludesRequest($inner)) {
+
+            foreach ($type->getTypes() as $named) {
+                if ($named instanceof ReflectionNamedType && $this->typeMatchesRequest($named)) {
+
                     return true;
                 }
             }
@@ -253,21 +358,46 @@ class Router
         return false;
     }
 
+
     private function typeAllowsArray(ReflectionType $type): bool
     {
+
+    private function parameterExpectsParamsArray(ReflectionParameter $parameter): bool
+    {
+        $type = $parameter->getType();
+
+
         if ($type instanceof ReflectionNamedType) {
             return $type->isBuiltin() && $type->getName() === 'array';
         }
 
         if ($type instanceof ReflectionUnionType) {
+
             foreach ($type->getTypes() as $inner) {
                 if ($this->typeAllowsArray($inner)) {
+
+            foreach ($type->getTypes() as $named) {
+                if ($named instanceof ReflectionNamedType && $named->isBuiltin() && $named->getName() === 'array') {
+
                     return true;
                 }
             }
         }
 
         return false;
+    }
+
+
+
+    private function typeMatchesRequest(ReflectionNamedType $type): bool
+    {
+        if ($type->isBuiltin()) {
+            return false;
+        }
+
+        $name = $type->getName();
+
+        return $name === Request::class || is_a($name, Request::class, true);
     }
 
     private function runMiddlewarePipeline(array $middlewares, Request $request, callable $destination, Container $container): Response
