@@ -8,6 +8,82 @@ use App\Core\Auth;
 use App\Core\DB;
 use App\Services\Notify;
 use PDO;
+// ==============================
+// Command Pattern Implementation
+// ==============================
+interface Command
+{
+    public function execute();
+}
+
+class AdminService
+{
+    public function banUser($userId)
+    {
+        echo "User {$userId} has been banned.<br>";
+    }
+
+    public function approvePost($postId)
+    {
+        echo "Post {$postId} has been approved.<br>";
+    }
+
+    public function deleteComment($commentId)
+    {
+        echo "Comment {$commentId} has been deleted.<br>";
+    }
+}
+
+class BanUserCommand implements Command
+{
+    private $service;
+    private $userId;
+
+    public function __construct(AdminService $service, $userId)
+    {
+        $this->service = $service;
+        $this->userId = $userId;
+    }
+
+    public function execute()
+    {
+        $this->service->banUser($this->userId);
+    }
+}
+
+class ApprovePostCommand implements Command
+{
+    private $service;
+    private $postId;
+
+    public function __construct(AdminService $service, $postId)
+    {
+        $this->service = $service;
+        $this->postId = $postId;
+    }
+
+    public function execute()
+    {
+        $this->service->approvePost($this->postId);
+    }
+}
+
+class DeleteCommentCommand implements Command
+{
+    private $service;
+    private $commentId;
+
+    public function __construct(AdminService $service, $commentId)
+    {
+        $this->service = $service;
+        $this->commentId = $commentId;
+    }
+
+    public function execute()
+    {
+        $this->service->deleteComment($this->commentId);
+    }
+}
 
 final class AdminController
 {
@@ -2712,5 +2788,20 @@ final class AdminController
         @rmdir($tmpBase);
 
         exit;
+    }
+
+    private $commands = [];
+
+    public function setCommand(Command $command)
+    {
+        $this->commands[] = $command;
+    }
+
+    public function executeCommands()
+    {
+        foreach ($this->commands as $command) {
+            $command->execute();
+        }
+        $this->commands = []; // Clear after execution
     }
 }
