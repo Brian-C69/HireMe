@@ -9,6 +9,8 @@ use App\Repositories\ResumeBuilderRepository;
 use App\Repositories\ResumeRepository;
 use App\Repositories\ResumeUnlockRepository;
 use App\Services\Notifications\NotificationService;
+use App\Services\Resume\Builder\HtmlProfileBuilder;
+use App\Services\Resume\ProfileDirector;
 use JsonException;
 use RuntimeException;
 
@@ -20,7 +22,8 @@ class ResumeService
         private ResumeBuilderRepository $builders,
         private ResumeUnlockRepository $unlocks,
         private BillingRepository $billing,
-        private NotificationService $notifications
+        private NotificationService $notifications,
+        private ProfileDirector $profileDirector
     ) {
     }
 
@@ -94,108 +97,12 @@ class ResumeService
         $relativePath = 'resumes/' . $filename;
         $fullPath = $directory . DIRECTORY_SEPARATOR . $filename;
 
-        $html = $this->renderResumeTemplate($data);
+        $html = $this->profileDirector->buildFullProfile(new HtmlProfileBuilder(), $data);
         if (file_put_contents($fullPath, $html) === false) {
             throw new RuntimeException(sprintf('Unable to write generated resume to %s.', $fullPath));
         }
 
         return $relativePath;
-    }
-
-    private function renderResumeTemplate(array $data): string
-    {
-        $name = $this->escape((string) ($data['name'] ?? 'Candidate'));
-        $headlineValue = trim((string) ($data['headline'] ?? ($data['title'] ?? '')));
-        $headline = $headlineValue !== '' ? '<p class="headline">' . $this->escape($headlineValue) . '</p>' : '';
-
-        $contactParts = [];
-        foreach (['email', 'phone', 'location'] as $field) {
-            if (!empty($data[$field])) {
-                $contactParts[] = '<span>' . $this->escape((string) $data[$field]) . '</span>';
-            }
-        }
-        $contact = $contactParts ? '<div class="contact">' . implode(' • ', $contactParts) . '</div>' : '';
-
-        $summaryValue = trim((string) ($data['summary'] ?? ''));
-        $summary = $summaryValue !== ''
-            ? '<section><h2>Summary</h2><p>' . nl2br($this->escape($summaryValue), false) . '</p></section>'
-            : '';
-
-        $experienceItems = '';
-        foreach ((array) ($data['experience'] ?? []) as $item) {
-            $role = trim((string) ($item['role'] ?? ($item['title'] ?? '')));
-            if ($role === '') {
-                continue;
-            }
-
-            $company = trim((string) ($item['company'] ?? ''));
-            $period = trim((string) ($item['period'] ?? ''));
-            $description = trim((string) ($item['description'] ?? ''));
-
-            $line = '<strong>' . $this->escape($role) . '</strong>';
-            if ($company !== '') {
-                $line .= ' at ' . $this->escape($company);
-            }
-            if ($period !== '') {
-                $line .= ' <em>(' . $this->escape($period) . ')</em>';
-            }
-
-            $experienceItems .= '<li>' . $line;
-            if ($description !== '') {
-                $experienceItems .= '<div>' . nl2br($this->escape($description), false) . '</div>';
-            }
-            $experienceItems .= '</li>';
-        }
-        $experience = $experienceItems !== ''
-            ? '<section><h2>Experience</h2><ul>' . $experienceItems . '</ul></section>'
-            : '';
-
-        $skillsItems = '';
-        foreach ((array) ($data['skills'] ?? []) as $skill) {
-            $skill = trim((string) $skill);
-            if ($skill === '') {
-                continue;
-            }
-            $skillsItems .= '<li>' . $this->escape($skill) . '</li>';
-        }
-        $skills = $skillsItems !== ''
-            ? '<section><h2>Skills</h2><ul class="skills">' . $skillsItems . '</ul></section>'
-            : '';
-
-        return <<<HTML
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>{$name} — Resume</title>
-    <style>
-        body { font-family: Arial, sans-serif; color: #1f2933; margin: 0; padding: 32px; background: #f9fafb; }
-        h1 { margin-bottom: 0; font-size: 28px; }
-        h2 { font-size: 18px; border-bottom: 1px solid #d9e2ec; padding-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; color: #102a43; }
-        .contact { margin-top: 4px; color: #486581; }
-        .headline { color: #243b53; margin-top: 8px; font-weight: 600; }
-        section { margin-top: 24px; }
-        ul { padding-left: 18px; }
-        ul.skills { display: flex; flex-wrap: wrap; list-style: none; padding: 0; margin: 0; }
-        ul.skills li { background: #e1effe; color: #1d4ed8; padding: 4px 8px; border-radius: 12px; margin: 4px 8px 4px 0; }
-        li { margin-bottom: 12px; }
-        li div { margin-top: 6px; color: #334e68; }
-    </style>
-</head>
-<body>
-    <header>
-        <h1>{$name}</h1>
-        {$contact}
-        {$headline}
-    </header>
-    <main>
-        {$summary}
-        {$experience}
-        {$skills}
-    </main>
-</body>
-</html>
-HTML;
     }
 
     private function encodeResumeData(array $data): string
@@ -205,10 +112,5 @@ HTML;
         } catch (JsonException $exception) {
             throw new RuntimeException('Unable to encode resume data to JSON.', 0, $exception);
         }
-    }
-
-    private function escape(string $value): string
-    {
-        return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     }
 }
