@@ -1,18 +1,14 @@
 <?php
-
 declare(strict_types=1);
 
-namespace App\Auth\Providers;
+namespace App\Controllers\Auth\Providers;
 
-use App\Auth\UserProviderInterface;
+use App\Controllers\Auth\UserProviderInterface;
 use PDO;
 
 final class RecruiterProvider implements UserProviderInterface
 {
-    public function getRole(): string
-    {
-        return 'Recruiter';
-    }
+    public function getRole(): string { return 'Recruiter'; }
 
     public function findByEmail(PDO $pdo, string $email): ?array
     {

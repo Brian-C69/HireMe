@@ -1,12 +1,11 @@
 <?php
-
 declare(strict_types=1);
 
-namespace App\Auth;
+namespace App\Controllers\Auth;
 
-use App\Auth\Providers\CandidateProvider;
-use App\Auth\Providers\EmployerProvider;
-use App\Auth\Providers\RecruiterProvider;
+use App\Controllers\Auth\Providers\CandidateProvider;
+use App\Controllers\Auth\Providers\EmployerProvider;
+use App\Controllers\Auth\Providers\RecruiterProvider;
 use PDO;
 
 final class UserProviderFactory

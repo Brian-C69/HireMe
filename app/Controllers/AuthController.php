@@ -1,24 +1,22 @@
 <?php
-// =====================================================================
-// app/Controllers/AuthController.php  (FULL UPDATED CLASS)
-// ---------------------------------------------------------------------
-// Includes: DB-backed login, register (prev), + forgot/reset flow using
-// PHPMailer wrapper. Field errors + old input preserved.
-// =====================================================================
+// app/Controllers/AuthController.php  (REFACTORED using Strategy + Factory)
+
+// Uses: App\Auth\UserProviderFactory + App\Services\AttemptService
+// Keeps original behaviour: login, register, forgot/reset, CSRF, flash, old/errors.
 declare(strict_types=1);
 
 namespace App\Controllers;
 
 use App\Core\DB;
 use App\Core\Mailer;
+use App\Controllers\Auth\UserProviderFactory;
+use App\Services\AttemptService;
 use PDO;
 use Throwable;
 
 final class AuthController
 {
-    private const MAX_ATTEMPTS = 3;
-    private const LOCK_MINUTES = 15;
-    private const ROLES        = ['Candidate', 'Employer', 'Recruiter'];
+    private const ROLES = ['Candidate', 'Employer', 'Recruiter'];
 
     /* ------------ Helpers ------------ */
     private function csrfToken(): string
@@ -101,75 +99,51 @@ final class AuthController
             $this->redirect('/login');
         }
 
-        if ($this->isLockedOut($email, $ip)) {
+        $pdo = DB::conn();
+        $attemptSvc = new AttemptService();
+
+        // check lockout using AttemptService
+        if ($attemptSvc->isLockedOut($pdo, $email, $ip)) {
             $this->flash('danger', 'Too many failed attempts. Please reset your password or try again later.');
             $this->setOld(['email' => $email]);
             $this->redirect('/login');
         }
 
-        $pdo  = DB::conn();
-        $user = $this->findUserByEmail($pdo, $email); // must return: id, email, password_hash, role
-        if (!$user || !password_verify($pass, (string)$user['password_hash'])) {
-            $this->recordFailure($email, $ip);
-            $left = max(0, self::MAX_ATTEMPTS - $this->attemptCount($email, $ip));
+        // Use factory to find user + provider (strategy)
+        $found = UserProviderFactory::findByEmail($pdo, $email); // returns ['provider'=>..., 'user'=>...]
+        if (!$found || !password_verify($pass, (string)$found['user']['password_hash'])) {
+            // record failure and show remaining attempts
+            $attemptSvc->recordFailure($pdo, $email, $ip);
+            $left = max(0, AttemptService::MAX_ATTEMPTS - $attemptSvc->attemptCount($pdo, $email, $ip));
             $this->setErrors([
-                'email'    => 'Invalid email or password.',
+                'email' => 'Invalid email or password.',
                 'password' => $left > 0 ? "You have {$left} attempt(s) left." : 'Limit reached. Please reset your password.',
             ]);
             $this->setOld(['email' => $email]);
             $this->redirect('/login');
         }
 
-        // ---- NEW: fetch role-specific meta for the session (name/premium/verified) ----
-        $name = '';
-        $premium = 0;
-        $verified = 0;
+        // success -> fetch meta using provider (strategy)
+        $provider = $found['provider'];
+        $user = $found['user'];
 
-        switch ((string)$user['role']) {
-            case 'Admin':
-                $st = $pdo->prepare("SELECT full_name FROM admins WHERE admin_id = :id LIMIT 1");
-                $st->execute([':id' => (int)$user['id']]);
-                if ($row = $st->fetch()) $name = (string)($row['full_name'] ?? '');
-                break;
+        $meta = $provider->fetchMeta($pdo, (int)$user['id']);
+        $name = (string)($meta['name'] ?? '');
+        $premium = (int)($meta['premium_badge'] ?? 0);
+        $verified = (int)($meta['verified_status'] ?? 0);
 
-            case 'Candidate':
-                $st = $pdo->prepare("SELECT full_name, premium_badge, verified_status FROM candidates WHERE candidate_id = :id LIMIT 1");
-                $st->execute([':id' => (int)$user['id']]);
-                if ($row = $st->fetch()) {
-                    $name     = (string)($row['full_name'] ?? '');
-                    $premium  = (int)($row['premium_badge'] ?? 0);
-                    $verified = (int)($row['verified_status'] ?? 0);
-                }
-                break;
+        $attemptSvc->resetAttempts($pdo, $email, $ip);
 
-            case 'Employer':
-                $st = $pdo->prepare("SELECT company_name FROM employers WHERE employer_id = :id LIMIT 1");
-                $st->execute([':id' => (int)$user['id']]);
-                if ($row = $st->fetch()) {
-                    $name = (string)($row['company_name'] ?? '');
-                }
-                break;
-
-            case 'Recruiter':
-                $st = $pdo->prepare("SELECT full_name FROM recruiters WHERE recruiter_id = :id LIMIT 1");
-                $st->execute([':id' => (int)$user['id']]);
-                if ($row = $st->fetch()) {
-                    $name = (string)($row['full_name'] ?? '');
-                }
-                break;
-        }
-
-        // Success
-        $this->resetAttempts($email, $ip);
         $_SESSION['user'] = [
             'id'              => (int)$user['id'],
             'email'           => (string)$user['email'],
             'role'            => (string)$user['role'],
             'name'            => $name,
-            'premium_badge'   => $premium,   // <- used by navbar ⭐ chip
-            'verified_status' => $verified,  // <- optional "verified" chip
+            'premium_badge'   => $premium,
+            'verified_status' => $verified,
             'time'            => time(),
         ];
+
         // rotate CSRF
         $_SESSION['csrf'] = bin2hex(random_bytes(16));
 
@@ -185,56 +159,7 @@ final class AuthController
         $this->redirect('/');
     }
 
-    private function findUserByEmail(PDO $pdo, string $email): ?array
-    {
-        foreach (
-            [
-                ["SELECT admin_id     AS id, email, password_hash, 'Admin'     AS role FROM admins     WHERE email=:e LIMIT 1"],
-                ["SELECT candidate_id AS id, email, password_hash, 'Candidate' AS role FROM candidates WHERE email=:e LIMIT 1"],
-                ["SELECT employer_id AS id, email, password_hash, 'Employer'  AS role FROM employers  WHERE email=:e LIMIT 1"],
-                ["SELECT recruiter_id AS id, email, password_hash, 'Recruiter' AS role FROM recruiters WHERE email=:e LIMIT 1"],
-            ] as $sql
-        ) {
-            $st = $pdo->prepare($sql[0]);
-            $st->execute([':e' => $email]);
-            $row = $st->fetch();
-            if ($row) return $row;
-        }
-        return null;
-    }
-
-    /* ------------ Lockout helpers ------------ */
-    private function isLockedOut(string $email, string $ip): bool
-    {
-        $pdo = DB::conn();
-        $st = $pdo->prepare("SELECT attempts,last_attempt_at FROM login_attempts WHERE email=:e AND ip_address=:i LIMIT 1");
-        $st->execute([':e' => $email, ':i' => $ip]);
-        $row = $st->fetch();
-        if (!$row) return false;
-        if ((int)$row['attempts'] < self::MAX_ATTEMPTS) return false;
-        return (time() - strtotime((string)$row['last_attempt_at'])) < self::LOCK_MINUTES * 60;
-    }
-    private function attemptCount(string $email, string $ip): int
-    {
-        $pdo = DB::conn();
-        $st = $pdo->prepare("SELECT attempts FROM login_attempts WHERE email=:e AND ip_address=:i LIMIT 1");
-        $st->execute([':e' => $email, ':i' => $ip]);
-        return (int)($st->fetchColumn() ?: 0);
-    }
-    private function recordFailure(string $email, string $ip): void
-    {
-        $pdo = DB::conn();
-        $st = $pdo->prepare("INSERT INTO login_attempts (email, ip_address, attempts, last_attempt_at) VALUES (:e,:i,1,NOW()) ON DUPLICATE KEY UPDATE attempts=attempts+1,last_attempt_at=NOW()");
-        $st->execute([':e' => $email, ':i' => $ip]);
-    }
-    private function resetAttempts(string $email, string $ip): void
-    {
-        $pdo = DB::conn();
-        $st = $pdo->prepare("DELETE FROM login_attempts WHERE email=:e AND ip_address=:i");
-        $st->execute([':e' => $email, ':i' => $ip]);
-    }
-
-    /* ------------ Register (kept from before; field errors + old) ------------ */
+    /* ------------ Register (delegated to providers) ------------ */
     public function showRegister(array $params = []): void
     {
         $root = dirname(__DIR__, 2);
@@ -262,6 +187,7 @@ final class AuthController
         $location = trim((string)($_POST['location'] ?? ''));
         $agencyName = trim((string)($_POST['agency_name'] ?? ''));
         $old = compact('role', 'email', 'fullName', 'companyName', 'phone', 'location', 'agencyName');
+
         $err = [];
         if (!in_array($role, self::ROLES, true)) $err['role'] = 'Select a valid role.';
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) $err['email'] = 'Provide a valid email.';
@@ -277,44 +203,47 @@ final class AuthController
         }
 
         $pdo = DB::conn();
-        if ($this->emailExistsAny($pdo, $email)) {
+
+        // check existing email (factory helper)
+        if (UserProviderFactory::emailExistsAny($pdo, $email)) {
             $this->setErrors(['email' => 'Email already registered.']);
             $this->setOld($old);
             $this->redirect('/register');
         }
-        $now = date('Y-m-d H:i:s');
+
+        // delegate insert to provider
+        $provider = UserProviderFactory::providerForRole($role);
+        if (!$provider) {
+            $this->flash('danger', 'Invalid role selected.');
+            $this->setOld($old);
+            $this->redirect('/register');
+        }
+
         $hash = password_hash($password, PASSWORD_DEFAULT);
+        $payload = [
+            'email' => $email,
+            'password_hash' => $hash,
+            'full_name' => $fullName,
+            'company_name' => $companyName,
+            'phone' => $phone,
+            'location' => $location,
+            'agency_name' => $agencyName,
+        ];
+
         try {
-            if ($role === 'Candidate') {
-                $st = $pdo->prepare("INSERT INTO candidates (full_name,email,password_hash,phone_number,country,created_at,updated_at) VALUES (:n,:e,:p,:ph,:c,:ca,:ua)");
-                $st->execute([':n' => $fullName, ':e' => $email, ':p' => $hash, ':ph' => $phone ?: null, ':c' => 'Malaysia', ':ca' => $now, ':ua' => $now]);
-            } elseif ($role === 'Employer') {
-                $st = $pdo->prepare("INSERT INTO employers (company_name,email,password_hash,industry,location,contact_person_name,contact_number,created_at,updated_at) VALUES (:cn,:e,:p,:i,:l,:cp,:cc,:ca,:ua)");
-                $st->execute([':cn' => $companyName, ':e' => $email, ':p' => $hash, ':i' => null, ':l' => $location ?: null, ':cp' => $fullName ?: null, ':cc' => $phone ?: null, ':ca' => $now, ':ua' => $now]);
-            } else {
-                $st = $pdo->prepare("INSERT INTO recruiters (full_name,email,password_hash,agency_name,contact_number,location,created_at,updated_at) VALUES (:n,:e,:p,:a,:c,:l,:ca,:ua)");
-                $st->execute([':n' => $fullName, ':e' => $email, ':p' => $hash, ':a' => $agencyName ?: null, ':c' => $phone ?: null, ':l' => $location ?: null, ':ca' => $now, ':ua' => $now]);
-            }
+            $ok = $provider->create($pdo, $payload);
+            if (!$ok) throw new \RuntimeException('Could not create user.');
         } catch (Throwable) {
             $this->flash('danger', 'Could not register. Please check your inputs.');
             $this->setOld($old);
             $this->redirect('/register');
         }
+
         $this->flash('success', 'Registration successful. Please log in.');
         $this->redirect('/login');
     }
 
-    private function emailExistsAny(PDO $pdo, string $email): bool
-    {
-        foreach (['candidates', 'employers', 'recruiters'] as $t) {
-            $q = $pdo->prepare("SELECT 1 FROM {$t} WHERE email=:e LIMIT 1");
-            $q->execute([':e' => $email]);
-            if ($q->fetchColumn()) return true;
-        }
-        return false;
-    }
-
-    /* ------------ Forgot / Reset ------------ */
+    /* ------------ Forgot / Reset (use factory) ------------ */
 
     public function showForgot(array $params = []): void
     {
@@ -343,18 +272,19 @@ final class AuthController
         }
 
         $pdo = DB::conn();
-        $user = $this->findUserByEmail($pdo, $email);
-        // Always respond success to avoid email enumeration
+        // still avoid enumeration
         $this->flash('success', 'If that email exists, a reset link has been sent.');
 
-        if ($user) {
+        $found = UserProviderFactory::findByEmail($pdo, $email);
+        if ($found) {
             $token = bin2hex(random_bytes(32));
             $hash = hash('sha256', $token);
             $expires = date('Y-m-d H:i:s', time() + 60 * 60); // 60 minutes
-            // invalidate previous tokens for this email
+
+            // invalidate previous tokens
             $pdo->prepare("DELETE FROM password_resets WHERE email=:e OR expires_at < NOW() OR used_at IS NOT NULL")->execute([':e' => $email]);
             $st = $pdo->prepare("INSERT INTO password_resets (email,user_type,token_hash,expires_at) VALUES (:e,:t,:h,:x)");
-            $st->execute([':e' => $email, ':t' => $user['role'], ':h' => $hash, ':x' => $expires]);
+            $st->execute([':e' => $email, ':t' => $found['user']['role'], ':h' => $hash, ':x' => $expires]);
 
             // send email
             $url = $this->absoluteBase() . '/reset?token=' . urlencode($token);
@@ -365,9 +295,9 @@ final class AuthController
 
             try {
                 (new Mailer())->send($email, 'Reset your HireMe password', $html, $text);
-            } catch (Throwable) { /* silent: still show success */
-            }
+            } catch (Throwable) { /* silent */ }
         }
+
         $this->redirect('/forgot');
     }
 
@@ -396,7 +326,6 @@ final class AuthController
         $csrf = $this->csrfToken();
         $errors = $this->takeErrors();
         $old = $this->takeOld();
-        // Pass token forward (plain token, never hash)
         $resetToken = $token;
         require $root . '/app/Views/layout.php';
     }
@@ -430,22 +359,19 @@ final class AuthController
             $this->redirect('/forgot');
         }
 
-        // Update password in the correct table
         $email = $row['email'];
         $role = $row['user_type'];
         $newHash = password_hash($password, PASSWORD_DEFAULT);
-        if ($role === 'Admin') {
-            $q = $pdo->prepare("UPDATE admins SET password_hash=:p, updated_at=NOW() WHERE email=:e LIMIT 1");
-        } elseif ($role === 'Candidate') {
-            $q = $pdo->prepare("UPDATE candidates SET password_hash=:p, updated_at=NOW() WHERE email=:e LIMIT 1");
-        } elseif ($role === 'Employer') {
-            $q = $pdo->prepare("UPDATE employers SET password_hash=:p, updated_at=NOW() WHERE email=:e LIMIT 1");
-        } else {
-            $q = $pdo->prepare("UPDATE recruiters SET password_hash=:p, updated_at=NOW() WHERE email=:e LIMIT 1");
-        }
-        $q->execute([':p' => $newHash, ':e' => $email]);
 
-        // Mark token used and remove any other outstanding tokens for this email
+        $provider = UserProviderFactory::providerForRole($role);
+        if ($provider === null) {
+            $this->flash('danger', 'Invalid user type.');
+            $this->redirect('/forgot');
+        }
+
+        $provider->updatePassword($pdo, $email, $newHash);
+
+        // mark token used and remove other outstanding tokens
         $pdo->prepare("UPDATE password_resets SET used_at=NOW() WHERE token_hash=:h")->execute([':h' => $hash]);
         $pdo->prepare("DELETE FROM password_resets WHERE email=:e AND used_at IS NULL")->execute([':e' => $email]);
 
