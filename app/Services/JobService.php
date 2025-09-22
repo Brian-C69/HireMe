@@ -4,90 +4,33 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Models\JobPosting;
-use Illuminate\Database\Capsule\Manager as Capsule;
+use App\Services\Job\JobModuleFacade;
 
 /**
- * Service layer responsible for job posting business rules.
+ * Backwards-compatible wrapper that delegates job orchestration to the module facade.
  */
 final class JobService
 {
-    /**
-     * Validate input and create a new job posting.
-     *
-     * @param string $role   Authenticated user role (Employer or Recruiter)
-     * @param int    $userId Authenticated user ID
-     * @param array  $input  Raw request payload
-     *
-     * @return array{0:int,1:array} [jobId, errors]
-     */
-    public function create(string $role, int $userId, array $input): array
+    private JobModuleFacade $facade;
+
+    public function __construct(?JobModuleFacade $facade = null)
     {
-        [$data, $errors] = $this->validate($role, $userId, $input);
-        if ($errors) {
-            return [0, $errors];
-        }
-
-        $questionIds = $data['question_ids'];
-        unset($data['question_ids']);
-
-        try {
-            $jobId = Capsule::connection()->transaction(function () use ($data, $questionIds) {
-                $job = JobPosting::create($data);
-                JobPosting::attachQuestions((int)$job->getKey(), $questionIds);
-                return (int)$job->getKey();
-            });
-            return [$jobId, []];
-        } catch (\Throwable $e) {
-            return [0, ['general' => 'Could not create job.']];
-        }
+        $this->facade = $facade ?? JobModuleFacade::buildDefault();
     }
 
     /**
-     * Validate and normalise job input data.
-     *
-     * @return array{0:array,1:array} [normalised data, errors]
+     * @return array{0:int,1:array<string,string>}
+     */
+    public function create(string $role, int $userId, array $input): array
+    {
+        return $this->facade->publishJob($role, $userId, $input);
+    }
+
+    /**
+     * @return array{0:array<string, mixed>,1:array<string,string>}
      */
     public function validate(string $role, int $userId, array $input): array
     {
-        $title   = trim((string)($input['job_title'] ?? ''));
-        $desc    = trim((string)($input['job_description'] ?? ''));
-        $loc     = trim((string)($input['job_location'] ?? ''));
-        $langs   = trim((string)($input['job_languages'] ?? ''));
-        $salary  = (string)($input['salary'] ?? '');
-        $empType = trim((string)($input['employment_type'] ?? 'Full-time'));
-
-        $companyId = ($role === 'Employer')
-            ? $userId
-            : (int)($input['company_id'] ?? 0);
-
-        $chosen = array_values(array_filter((array)($input['mi_questions'] ?? []), fn($v) => ctype_digit((string)$v)));
-        $chosen = array_unique(array_map('intval', $chosen));
-
-        $errors = [];
-        if ($title === '') $errors['job_title'] = 'Job title is required.';
-        if ($desc  === '') $errors['job_description'] = 'Description is required.';
-        if ($salary !== '' && !is_numeric($salary)) $errors['salary'] = 'Salary must be numeric (e.g., 3500).';
-        if ($role === 'Recruiter' && $companyId <= 0) $errors['company_id'] = 'Please select a company.';
-        if (count($chosen) !== 3) $errors['mi_questions'] = 'Please select exactly 3 questions.';
-
-        $now = date('Y-m-d H:i:s');
-        $data = [
-            'company_id'      => $companyId,
-            'recruiter_id'    => ($role === 'Recruiter' ? $userId : null),
-            'job_title'       => $title,
-            'job_description' => $desc,
-            'job_requirements'=> null,
-            'job_location'    => $loc ?: null,
-            'job_languages'   => $langs ?: null,
-            'employment_type' => $empType ?: 'Full-time',
-            'salary_range_min'=> ($salary === '' ? null : number_format((float)$salary, 2, '.', '')),
-            'date_posted'     => $now,
-            'created_at'      => $now,
-            'updated_at'      => $now,
-            'question_ids'    => $chosen,
-        ];
-
-        return [$data, $errors];
+        return $this->facade->validateJobInput($role, $userId, $input);
     }
 }
