@@ -69,6 +69,11 @@ class JsonProfileBuilder implements ProfileBuilder
         $this->profile['skills'] = array_values($skills);
     }
 
+    public function getFormat(): string
+    {
+        return 'json';
+    }
+
     public function getProfile(): string
     {
         try {

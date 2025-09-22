@@ -2,9 +2,8 @@
 
 declare(strict_types=1);
 
-namespace App\Services\Resume;
+namespace App\Services\Resume\Builder;
 
-use App\Services\Resume\Builder\ProfileBuilder;
 
 use function array_slice;
 use function is_array;

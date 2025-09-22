@@ -21,37 +21,32 @@ spl_autoload_register(function (string $class): void {
 
 use App\Services\Resume\Builder\HtmlProfileBuilder;
 use App\Services\Resume\Builder\JsonProfileBuilder;
-use App\Services\Resume\ProfileDirector;
-use PHPUnit\Framework\TestCase;
+use App\Services\Resume\Builder\ProfileDirector;
 
-final class ProfileBuilderTest extends TestCase
-{
-    public function test_html_builder_emits_full_resume_markup(): void
-    {
-        $director = new ProfileDirector();
-        $builder = new HtmlProfileBuilder();
+$director = new ProfileDirector();
+$htmlBuilder = new HtmlProfileBuilder();
 
-        $data = [
-            'name' => 'Ada Lovelace',
-            'headline' => 'Mathematician & Writer',
-            'email' => 'ada@example.com',
-            'phone' => '+1 555-1234',
-            'location' => 'London',
-            'summary' => "First programmer & visionary.\nWorking on \"Analytical\" Engine.",
-            'experience' => [
-                [
-                    'role' => 'Lead Analyst',
-                    'company' => 'Babbage Engines',
-                    'period' => '1833-1842',
-                    'description' => "Developed algorithms\nDocumented notes",
-                ],
-            ],
-            'skills' => ['Mathematics', 'Programming'],
-        ];
+$htmlData = [
+    'name' => 'Ada Lovelace',
+    'headline' => 'Mathematician & Writer',
+    'email' => 'ada@example.com',
+    'phone' => '+1 555-1234',
+    'location' => 'London',
+    'summary' => "First programmer & visionary.\nWorking on \"Analytical\" Engine.",
+    'experience' => [
+        [
+            'role' => 'Lead Analyst',
+            'company' => 'Babbage Engines',
+            'period' => '1833-1842',
+            'description' => "Developed algorithms\nDocumented notes",
+        ],
+    ],
+    'skills' => ['Mathematics', 'Programming'],
+];
 
-        $html = $director->buildFullProfile($builder, $data);
+$html = $director->buildFullProfile($htmlBuilder, $htmlData);
 
-        $expected = <<<'HTML'
+$expectedHtml = <<<'HTML'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -88,56 +83,46 @@ Documented notes</div></li></ul></section>
 </html>
 HTML;
 
-        self::assertSame($expected, $html);
-    }
+assert($html === $expectedHtml, 'HTML builder should render the expected resume markup.');
 
-    public function test_json_builder_supports_full_and_preview_variants(): void
-    {
-        $director = new ProfileDirector();
-        $builder = new JsonProfileBuilder();
+$jsonBuilder = new JsonProfileBuilder();
 
-        $data = [
-            'name' => 'Grace Hopper',
-            'title' => 'Computer Scientist',
-            'email' => 'grace@example.com',
-            'summary' => 'Collaborated across teams.',
-            'experience' => [
-                [
-                    'title' => 'Rear Admiral',
-                    'company' => 'US Navy',
-                    'period' => '1943-1986',
-                    'description' => 'Led computing efforts.',
-                ],
-                [
-                    'role' => 'Researcher',
-                    'description' => 'Created COBOL.',
-                ],
-            ],
-            'skills' => ['Leadership', 'COBOL', '', 'Compilers', 'Teamwork', 'Innovation'],
-        ];
+$jsonData = [
+    'name' => 'Grace Hopper',
+    'title' => 'Computer Scientist',
+    'email' => 'grace@example.com',
+    'summary' => 'Collaborated across teams.',
+    'experience' => [
+        [
+            'title' => 'Rear Admiral',
+            'company' => 'US Navy',
+            'period' => '1943-1986',
+            'description' => 'Led computing efforts.',
+        ],
+        [
+            'role' => 'Researcher',
+            'description' => 'Created COBOL.',
+        ],
+    ],
+    'skills' => ['Leadership', 'COBOL', '', 'Compilers', 'Teamwork', 'Innovation'],
+];
 
-        $full = $director->buildFullProfile($builder, $data);
-        $fullProfile = json_decode($full, true, 512, JSON_THROW_ON_ERROR);
+$fullJson = $director->buildFullProfile($jsonBuilder, $jsonData);
+$fullProfile = json_decode($fullJson, true, 512, JSON_THROW_ON_ERROR);
 
-        self::assertSame('Grace Hopper', $fullProfile['name']);
-        self::assertSame('Computer Scientist', $fullProfile['headline']);
-        self::assertSame(['grace@example.com'], $fullProfile['contacts']);
-        self::assertCount(2, $fullProfile['experience']);
-        self::assertSame(
-            ['Leadership', 'COBOL', 'Compilers', 'Teamwork', 'Innovation'],
-            $fullProfile['skills']
-        );
+assert($fullProfile['name'] === 'Grace Hopper');
+assert($fullProfile['headline'] === 'Computer Scientist');
+assert($fullProfile['contacts'] === ['grace@example.com']);
+assert(count($fullProfile['experience']) === 2);
+assert($fullProfile['skills'] === ['Leadership', 'COBOL', 'Compilers', 'Teamwork', 'Innovation']);
 
-        $preview = $director->buildPreview($builder, $data);
-        $previewProfile = json_decode($preview, true, 512, JSON_THROW_ON_ERROR);
+$previewJson = $director->buildPreview($jsonBuilder, $jsonData);
+$previewProfile = json_decode($previewJson, true, 512, JSON_THROW_ON_ERROR);
 
-        self::assertSame('Grace Hopper', $previewProfile['name']);
-        self::assertSame('Computer Scientist', $previewProfile['headline']);
-        self::assertSame(['grace@example.com'], $previewProfile['contacts']);
-        self::assertCount(1, $previewProfile['experience']);
-        self::assertSame(
-            ['Leadership', 'COBOL', 'Compilers', 'Teamwork', 'Innovation'],
-            $previewProfile['skills']
-        );
-    }
-}
+assert($previewProfile['name'] === 'Grace Hopper');
+assert($previewProfile['headline'] === 'Computer Scientist');
+assert($previewProfile['contacts'] === ['grace@example.com']);
+assert(count($previewProfile['experience']) === 1);
+assert($previewProfile['skills'] === ['Leadership', 'COBOL', 'Compilers', 'Teamwork', 'Innovation']);
+
+echo "ProfileBuilder tests passed\n";

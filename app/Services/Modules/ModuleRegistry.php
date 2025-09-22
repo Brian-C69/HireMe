@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Modules;
 
 use App\Core\Request;
+use App\Services\Resume\Builder\ProfileDirector;
 use InvalidArgumentException;
 
 final class ModuleRegistry
@@ -108,7 +109,7 @@ final class ModuleRegistry
         $registry = new self();
 
         $registry->register(new UserManagementService(), ['user', 'users', 'auth', 'authentication']);
-        $registry->register(new ResumeProfileService(), ['resume', 'resumes', 'profile', 'profiles']);
+        $registry->register(new ResumeProfileService(new ProfileDirector()), ['resume', 'resumes', 'profile', 'profiles']);
         $registry->register(new JobApplicationService(), ['job', 'jobs', 'application', 'applications']);
         $registry->register(new PaymentBillingService(), ['payment', 'payments', 'billing']);
         $registry->register(new AdminModerationService(), ['admin', 'admins', 'moderation', 'moderator']);

@@ -33,5 +33,7 @@ interface ProfileBuilder
      */
     public function addSkills(array $skills): void;
 
+    public function getFormat(): string;
+
     public function getProfile(): string;
 }
