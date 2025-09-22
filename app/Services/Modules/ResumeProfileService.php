@@ -9,9 +9,29 @@ use App\Models\Candidate;
 use App\Models\Resume;
 use Illuminate\Database\Eloquent\Model;
 use InvalidArgumentException;
+use App\Services\Resume\Builder\HtmlProfileBuilder;
+use App\Services\Resume\Builder\JsonProfileBuilder;
+use App\Services\Resume\Builder\ProfileBuilder;
+use App\Services\Resume\Builder\ProfileDirector;
+use JsonException;
+use function in_array;
+use function is_array;
+use function is_string;
+use function json_decode;
+use function strtolower;
+use function str_ends_with;
+use function trim;
+
 
 final class ResumeProfileService extends AbstractModuleService
 {
+    private ProfileDirector $profileDirector;
+
+    public function __construct(?ProfileDirector $profileDirector = null)
+    {
+        $this->profileDirector = $profileDirector ?? new ProfileDirector();
+    }
+
     public function name(): string
     {
         return 'resume-profile';
@@ -86,6 +106,12 @@ final class ResumeProfileService extends AbstractModuleService
             $payload['candidate'] = $candidate->toArray();
         }
 
+        $rendered = $this->renderResumeOutput($resume);
+        if ($rendered !== null) {
+            $payload['rendered_resume'] = $rendered['output'];
+            $payload['rendered_format'] = $rendered['format'];
+        }
+
         return $this->respond([
             'resume' => $payload,
         ]);
@@ -131,10 +157,78 @@ final class ResumeProfileService extends AbstractModuleService
             'role' => 'candidates',
         ]);
 
+        $resumeData = null;
+        if ($resume !== null) {
+            $resumeData = $resume->toArray();
+            $rendered = $this->renderResumeOutput($resume);
+            if ($rendered !== null) {
+                $resumeData['rendered_resume'] = $rendered['output'];
+                $resumeData['rendered_format'] = $rendered['format'];
+            }
+        }
+
         return $this->respond([
             'profile' => $candidate->toArray(),
-            'resume' => $resume?->toArray(),
+            'resume' => $resumeData,
             'user' => $userDetails['user'] ?? null,
         ]);
     }
+    /**
+     * Render the resume using the configured builder.
+     *
+     * @return array{output: string, format: string}|null
+     */
+    private function renderResumeOutput(Resume $resume, string $variant = 'full'): ?array
+    {
+        $content = $resume->getAttribute('content');
+        if (!is_string($content) || trim($content) === '') {
+            return null;
+        }
+
+        try {
+            $data = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            return null;
+        }
+
+        if (!is_array($data)) {
+            return null;
+        }
+
+        $builder = $this->selectBuilderForResume($resume, $data);
+        $format = $builder->getFormat();
+
+        $output = $variant === 'preview'
+            ? $this->profileDirector->buildPreview($builder, $data)
+            : $this->profileDirector->buildFullProfile($builder, $data);
+
+        return [
+            'output' => $output,
+            'format' => $format,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function selectBuilderForResume(Resume $resume, array $data): ProfileBuilder
+    {
+        $format = $data['format'] ?? $data['builder'] ?? $data['output'] ?? null;
+        $normalised = is_string($format) ? strtolower($format) : null;
+
+        if (in_array($normalised, ['json', 'application/json'], true)) {
+            return new JsonProfileBuilder();
+        }
+
+        $path = $resume->getAttribute('file_path');
+        if (is_string($path) && $path !== '') {
+            $lower = strtolower($path);
+            if (str_ends_with($lower, '.json')) {
+                return new JsonProfileBuilder();
+            }
+        }
+
+        return new HtmlProfileBuilder();
+    }
+
 }

@@ -121,6 +121,11 @@ class HtmlProfileBuilder implements ProfileBuilder
             : '';
     }
 
+    public function getFormat(): string
+    {
+        return 'html';
+    }
+
     public function getProfile(): string
     {
         return <<<HTML
