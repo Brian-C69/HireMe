@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace App\Auth\Providers;
@@ -8,7 +9,10 @@ use PDO;
 
 final class EmployerProvider implements UserProviderInterface
 {
-    public function getRole(): string { return 'Employer'; }
+    public function getRole(): string
+    {
+        return 'Employer';
+    }
 
     public function findByEmail(PDO $pdo, string $email): ?array
     {
