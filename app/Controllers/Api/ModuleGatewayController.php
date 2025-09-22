@@ -28,6 +28,11 @@ final class ModuleGatewayController extends ApiController
 
     public function handle(Request $request, string $function, string $type, ?string $id = null): Response
     {
+        $ability = sprintf('module:%s:%s', strtolower($function), strtolower($request->method()));
+        if (($response = $this->throttle($request, $ability)) !== null) {
+            return $response;
+        }
+
         $service = $this->registry->get($function);
         if ($service === null) {
             return $this->error(sprintf('Unknown API module "%s".', $function), 404);

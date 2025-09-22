@@ -41,6 +41,11 @@ class ResourceController extends ApiController
 
     public function index(Request $request, string $resource): Response
     {
+        $ability = sprintf('resource:%s:%s', strtolower($resource), strtolower($request->method()));
+        if (($response = $this->throttle($request, $ability)) !== null) {
+            return $response;
+        }
+
         $modelClass = $this->resolveModel($resource);
         if ($modelClass === null) {
             return $this->error('Unknown resource.', 404);
@@ -72,6 +77,11 @@ class ResourceController extends ApiController
 
     public function show(Request $request, string $resource, int|string $id): Response
     {
+        $ability = sprintf('resource:%s:%s', strtolower($resource), strtolower($request->method()));
+        if (($response = $this->throttle($request, $ability)) !== null) {
+            return $response;
+        }
+
         $modelClass = $this->resolveModel($resource);
         if ($modelClass === null) {
             return $this->error('Unknown resource.', 404);
@@ -87,6 +97,11 @@ class ResourceController extends ApiController
 
     public function store(Request $request, string $resource): Response
     {
+        $ability = sprintf('resource:%s:%s', strtolower($resource), strtolower($request->method()));
+        if (($response = $this->throttle($request, $ability)) !== null) {
+            return $response;
+        }
+
         $modelClass = $this->resolveModel($resource);
         if ($modelClass === null) {
             return $this->error('Unknown resource.', 404);
@@ -103,6 +118,11 @@ class ResourceController extends ApiController
 
     public function update(Request $request, string $resource, int|string $id): Response
     {
+        $ability = sprintf('resource:%s:%s', strtolower($resource), strtolower($request->method()));
+        if (($response = $this->throttle($request, $ability)) !== null) {
+            return $response;
+        }
+
         $modelClass = $this->resolveModel($resource);
         if ($modelClass === null) {
             return $this->error('Unknown resource.', 404);
@@ -124,6 +144,11 @@ class ResourceController extends ApiController
 
     public function destroy(Request $request, string $resource, int|string $id): Response
     {
+        $ability = sprintf('resource:%s:%s', strtolower($resource), strtolower($request->method()));
+        if (($response = $this->throttle($request, $ability)) !== null) {
+            return $response;
+        }
+
         $modelClass = $this->resolveModel($resource);
         if ($modelClass === null) {
             return $this->error('Unknown resource.', 404);

@@ -31,7 +31,9 @@ final class Auth
     public static function requireLogin(): void
     {
         if (!self::check()) {
-            self::flash('warning', 'Please log in first.');
+            if (!isset($_SESSION['flash'])) {
+                self::flash('warning', 'Please log in first.');
+            }
             self::redirect('/login');
         }
     }
@@ -43,7 +45,9 @@ final class Auth
     public static function requireRole(string|array $roles): void
     {
         if (!self::check()) {
-            self::flash('warning', 'Please log in first.');
+            if (!isset($_SESSION['flash'])) {
+                self::flash('warning', 'Please log in first.');
+            }
             self::redirect('/login');
         }
 
