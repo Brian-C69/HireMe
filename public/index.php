@@ -211,9 +211,9 @@ $router->put('/api/{resource}/{id}', [ResourceController::class, 'update'], ['js
 $router->patch('/api/{resource}/{id}', [ResourceController::class, 'update'], ['json' => true]);
 $router->delete('/api/{resource}/{id}', [ResourceController::class, 'destroy'], ['json' => true]);
 
-// API: Module gateway endpoints (public/api/{function}/{type}/{id})
-$router->any('/public/api/{function}/{type}/{id}', [ModuleGatewayController::class, 'handle'], ['json' => true]);
-$router->any('/public/api/{function}/{type}', [ModuleGatewayController::class, 'handle'], ['json' => true]);
+// API: Module gateway endpoints (/api/{function}/{type}/{id}) — works with or without the /public base path
+$router->any('/api/{function}/{type}/{id}', [ModuleGatewayController::class, 'handle'], ['json' => true]);
+$router->any('/api/{function}/{type}', [ModuleGatewayController::class, 'handle'], ['json' => true]);
 
 $request = Request::fromGlobals(defined('BASE_URL') ? BASE_URL : null);
 $response = $router->dispatch($request, $container);
