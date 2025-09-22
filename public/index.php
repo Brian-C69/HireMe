@@ -17,6 +17,7 @@ use App\Controllers\RecruiterCompaniesController;
 use App\Controllers\AdminController;
 use App\Controllers\AccountController;
 use App\Controllers\UserController;
+use App\Controllers\Api\ModuleGatewayController;
 use App\Controllers\Api\ResourceController;
 
 $container = require dirname(__DIR__) . '/app/bootstrap.php';
@@ -209,6 +210,10 @@ $router->post('/api/{resource}', [ResourceController::class, 'store'], ['json' =
 $router->put('/api/{resource}/{id}', [ResourceController::class, 'update'], ['json' => true]);
 $router->patch('/api/{resource}/{id}', [ResourceController::class, 'update'], ['json' => true]);
 $router->delete('/api/{resource}/{id}', [ResourceController::class, 'destroy'], ['json' => true]);
+
+// API: Module gateway endpoints (public/api/{function}/{type}/{id})
+$router->any('/public/api/{function}/{type}/{id}', [ModuleGatewayController::class, 'handle'], ['json' => true]);
+$router->any('/public/api/{function}/{type}', [ModuleGatewayController::class, 'handle'], ['json' => true]);
 
 $request = Request::fromGlobals(defined('BASE_URL') ? BASE_URL : null);
 $response = $router->dispatch($request, $container);
