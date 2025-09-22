@@ -113,15 +113,142 @@ final class UserManagementService extends AbstractModuleService
                 throw new InvalidArgumentException('User record not found.');
             }
 
+
+            [$related, $includes] = $this->loadRelatedData($request, $role, $userId);
+
+            $payload = [
+                'role' => $role,
+                'user' => $user->toArray(),
+            ];
+
+            if ($includes !== []) {
+                $payload['includes'] = $includes;
+            }
+
+            if ($related !== []) {
+                $payload['related'] = $related;
+            }
+
+            return $this->respond($payload);
+
             return $this->respond([
                 'role' => $role,
                 'user' => $user->toArray(),
             ]);
+
         }
 
         foreach (self::ROLE_MODELS as $role => $modelClass) {
             $user = $modelClass::find($userId);
             if ($user !== null) {
+
+                [$related, $includes] = $this->loadRelatedData($request, $role, $userId);
+
+                $payload = [
+                    'role' => $role,
+                    'user' => $user->toArray(),
+                ];
+
+                if ($includes !== []) {
+                    $payload['includes'] = $includes;
+                }
+
+                if ($related !== []) {
+                    $payload['related'] = $related;
+                }
+
+                return $this->respond($payload);
+            }
+        }
+
+        throw new InvalidArgumentException('User record not found.');
+    }
+
+    /**
+     * Load optional related resources for a user by invoking other module web services.
+     *
+     * @return array{0: array<string, mixed>, 1: array<int, string>}
+     */
+    private function loadRelatedData(Request $request, string $role, int $userId): array
+    {
+        $includeParam = $this->query($request, 'include');
+        if ($includeParam === null || trim($includeParam) === '') {
+            return [[], []];
+        }
+
+        $parts = array_map(static fn (string $part): string => strtolower(trim($part)), explode(',', $includeParam));
+        $includes = array_values(array_unique(array_filter($parts, static fn (string $part): bool => $part !== '')));
+
+        if ($includes === []) {
+            return [[], []];
+        }
+
+        $related = [];
+
+        if ($role === 'candidates' && (in_array('profile', $includes, true) || in_array('resume', $includes, true))) {
+            $profile = $this->forward('resume-profile', 'profile', (string) $userId);
+            if (in_array('profile', $includes, true)) {
+                $related['profile'] = $profile['profile'] ?? null;
+            }
+            if (in_array('resume', $includes, true)) {
+                $related['resume'] = $profile['resume'] ?? null;
+            }
+        }
+
+        if ($role === 'candidates' && in_array('applications', $includes, true)) {
+            $applications = $this->forward('job-application', 'applications', null, [
+                'candidate_id' => (string) $userId,
+            ]);
+            $related['applications'] = $applications['applications'] ?? [];
+            if (isset($applications['count'])) {
+                $related['applications_count'] = $applications['count'];
+            }
+        }
+
+        if (in_array('jobs', $includes, true)) {
+            $jobs = null;
+            if ($role === 'employers') {
+                $jobs = $this->forward('job-application', 'jobs', null, [
+                    'employer_id' => (string) $userId,
+                ]);
+            } elseif ($role === 'recruiters') {
+                $jobs = $this->forward('job-application', 'jobs', null, [
+                    'recruiter_id' => (string) $userId,
+                ]);
+            }
+
+            if (is_array($jobs)) {
+                $related['jobs'] = $jobs['jobs'] ?? [];
+                if (isset($jobs['count'])) {
+                    $related['jobs_count'] = $jobs['count'];
+                }
+            }
+        }
+
+        if (in_array('payments', $includes, true)) {
+            $payments = $this->forward('payment-billing', 'payments', null, [
+                'user_type' => $role,
+                'user_id' => (string) $userId,
+            ]);
+            $related['payments'] = $payments['payments'] ?? [];
+            if (isset($payments['count'])) {
+                $related['payments_count'] = $payments['count'];
+            }
+        }
+
+        if (in_array('billing', $includes, true)) {
+            $billing = $this->forward('payment-billing', 'billing', null, [
+                'user_type' => $role,
+                'user_id' => (string) $userId,
+            ]);
+            $related['billing'] = $billing['billing'] ?? [];
+            if (isset($billing['count'])) {
+                $related['billing_count'] = $billing['count'];
+            }
+        }
+
+        return [$related, $includes];
+
                 return $this->respond([
                     'role' => $role,
                     'user' => $user->toArray(),
@@ -130,6 +257,7 @@ final class UserManagementService extends AbstractModuleService
         }
 
         throw new InvalidArgumentException('User record not found.');
+
     }
 
     /**
