@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Core\Container;
 use App\Core\DB;
 use App\Core\Middleware;
+use App\Services\Job\JobModuleFacade;
 use Illuminate\Database\Capsule\Manager as Capsule;
 
 // Base directory of the project
@@ -157,6 +158,7 @@ $container = new Container();
 $container->set('config', $config);
 $container->set('db', DB::conn());
 $container->set('orm', $capsule);
+$container->singleton(JobModuleFacade::class, static fn (): JobModuleFacade => JobModuleFacade::buildDefault());
 
 // Shared middleware registry (none yet but ready for expansion)
 Middleware::run();
