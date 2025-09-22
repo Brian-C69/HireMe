@@ -8,7 +8,7 @@ use App\Services\Payment\PaymentEvent;
 use App\Services\Payment\PaymentObserver;
 use App\Services\Payment\PaymentProcessor;
 
-final class AccountingExporter implements PaymentObserver
+final class AccountingNotifier implements PaymentObserver
 {
     public function __construct(private readonly string $logFile)
     {
@@ -19,6 +19,7 @@ final class AccountingExporter implements PaymentObserver
         if (!in_array($event->name(), [
             PaymentProcessor::EVENT_INVOICE_PAID,
             PaymentProcessor::EVENT_PAYMENT_FAILED,
+            PaymentProcessor::EVENT_PAYMENT_REFUNDED,
         ], true)) {
             return;
         }

@@ -21,10 +21,9 @@ spl_autoload_register(function (string $class): void {
 use App\Models\Billing;
 use App\Models\Candidate;
 use App\Models\Employer;
-use App\Models\Payment;
 use App\Services\Modules\PaymentBillingService;
-use App\Services\Payment\Observers\AccountingExporter;
-use App\Services\Payment\Observers\InvoiceUpdater;
+use App\Services\Payment\Observers\AccountingNotifier;
+use App\Services\Payment\Observers\InvoiceStatusUpdater;
 use App\Services\Payment\Observers\SubscriptionStateManager;
 use App\Services\Payment\PaymentProcessor;
 use Illuminate\Database\Capsule\Manager as Capsule;
@@ -98,15 +97,18 @@ $pdo->exec("INSERT INTO candidates (candidate_id, full_name, email, password_has
 $logFile = tempnam(sys_get_temp_dir(), 'acct');
 
 $processor = new PaymentProcessor();
-$invoiceUpdater = new InvoiceUpdater();
+$invoiceUpdater = new InvoiceStatusUpdater();
 $subscriptionManager = new SubscriptionStateManager();
-$accountingExporter = new AccountingExporter($logFile);
+$accountingNotifier = new AccountingNotifier($logFile);
 
 $processor->attach(PaymentProcessor::EVENT_INVOICE_PAID, $invoiceUpdater);
 $processor->attach(PaymentProcessor::EVENT_PAYMENT_FAILED, $invoiceUpdater);
+$processor->attach(PaymentProcessor::EVENT_PAYMENT_REFUNDED, $invoiceUpdater);
 $processor->attach(PaymentProcessor::EVENT_INVOICE_PAID, $subscriptionManager);
-$processor->attach(PaymentProcessor::EVENT_INVOICE_PAID, $accountingExporter);
-$processor->attach(PaymentProcessor::EVENT_PAYMENT_FAILED, $accountingExporter);
+$processor->attach(PaymentProcessor::EVENT_PAYMENT_REFUNDED, $subscriptionManager);
+$processor->attach(PaymentProcessor::EVENT_INVOICE_PAID, $accountingNotifier);
+$processor->attach(PaymentProcessor::EVENT_PAYMENT_FAILED, $accountingNotifier);
+$processor->attach(PaymentProcessor::EVENT_PAYMENT_REFUNDED, $accountingNotifier);
 
 $service = new PaymentBillingService($processor);
 
@@ -160,6 +162,80 @@ assert($candidate !== null && (int) $candidate->getAttribute('premium_badge') ==
 
 $logContents = file_get_contents($logFile) ?: '';
 assert(str_contains($logContents, '"event":"payment_failed"'), 'Accounting export should log failed payments.');
+
+$premiumSuccessRequest = new App\Core\Request([], [
+    'user_id' => 2,
+    'user_type' => 'Candidate',
+    'amount' => 2999,
+    'purpose' => 'premium badge',
+    'payment_method' => 'stripe',
+    'transaction_status' => 'paid',
+    'transaction_id' => 'pi_candidate_premium_001',
+]);
+
+$premiumSuccess = $service->handle('charge', null, $premiumSuccessRequest);
+
+assert($premiumSuccess['event'] === PaymentProcessor::EVENT_INVOICE_PAID, 'Candidate premium purchases should emit invoice_paid.');
+
+$candidateBilling = Billing::query()
+    ->where('user_id', 2)
+    ->where('user_type', 'Candidate')
+    ->where('reference_number', 'pi_candidate_premium_001')
+    ->first();
+
+assert($candidateBilling instanceof Billing, 'Candidate premium payment should create a billing record.');
+assert($candidateBilling->getAttribute('status') === 'paid', 'Candidate premium billing should be marked paid.');
+
+$candidate = Candidate::find(2);
+assert($candidate !== null && (int) $candidate->getAttribute('premium_badge') === 1, 'Premium badge should activate after successful payment.');
+
+$premiumRefundRequest = new App\Core\Request([], [
+    'user_id' => 2,
+    'user_type' => 'Candidate',
+    'amount' => 2999,
+    'purpose' => 'premium badge',
+    'payment_method' => 'stripe',
+    'transaction_status' => 'refund',
+    'transaction_id' => 'pi_candidate_premium_001',
+    'billing_id' => $candidateBilling->getKey(),
+]);
+
+$premiumRefund = $service->handle('charge', null, $premiumRefundRequest);
+
+assert($premiumRefund['event'] === PaymentProcessor::EVENT_PAYMENT_REFUNDED, 'Candidate premium refunds should emit payment_refunded.');
+
+$candidateRefundBilling = Billing::find($candidateBilling->getKey());
+assert($candidateRefundBilling instanceof Billing && $candidateRefundBilling->getAttribute('status') === 'refunded', 'Candidate refund should mark billing as refunded.');
+assert((float) $candidateRefundBilling->getAttribute('amount') < 0, 'Candidate refund amount should be negative.');
+
+$candidate = Candidate::find(2);
+assert($candidate !== null && (int) $candidate->getAttribute('premium_badge') === 0, 'Premium badge should deactivate after refund.');
+
+$refundRequest = new App\Core\Request([], [
+    'user_id' => 1,
+    'user_type' => 'Employer',
+    'amount' => 4999,
+    'purpose' => 'credits',
+    'payment_method' => 'stripe',
+    'transaction_status' => 'refunded',
+    'transaction_id' => 'pi_success_001',
+    'metadata' => ['credits' => 5],
+    'billing_id' => $billing->getKey(),
+]);
+
+$refund = $service->handle('charge', null, $refundRequest);
+
+assert($refund['event'] === PaymentProcessor::EVENT_PAYMENT_REFUNDED, 'Refunded payments should emit the payment_refunded event.');
+
+$refundedBilling = Billing::find($billing->getKey());
+assert($refundedBilling instanceof Billing && $refundedBilling->getAttribute('status') === 'refunded', 'Refunded billing record should be marked as refunded.');
+assert((float) $refundedBilling->getAttribute('amount') < 0, 'Refunded billing amount should be negative to indicate reversal.');
+
+$employer = Employer::find(1);
+assert($employer !== null && (int) $employer->getAttribute('credits_balance') === 0, 'Employer credits should revert after refund.');
+
+$logContents = file_get_contents($logFile) ?: '';
+assert(str_contains($logContents, '"event":"payment_refunded"'), 'Accounting export should log refunded payments.');
 
 unlink($logFile);
 

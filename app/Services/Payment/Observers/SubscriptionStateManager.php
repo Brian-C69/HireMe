@@ -10,12 +10,16 @@ use App\Models\Recruiter;
 use App\Services\Payment\PaymentEvent;
 use App\Services\Payment\PaymentObserver;
 use App\Services\Payment\PaymentProcessor;
+use Illuminate\Database\Eloquent\Builder;
 
 final class SubscriptionStateManager implements PaymentObserver
 {
     public function handle(PaymentEvent $event): void
     {
-        if ($event->name() !== PaymentProcessor::EVENT_INVOICE_PAID) {
+        if (!in_array($event->name(), [
+            PaymentProcessor::EVENT_INVOICE_PAID,
+            PaymentProcessor::EVENT_PAYMENT_REFUNDED,
+        ], true)) {
             return;
         }
 
@@ -29,12 +33,24 @@ final class SubscriptionStateManager implements PaymentObserver
             $credits = $metadata['credits'];
         }
 
+        if ($event->name() === PaymentProcessor::EVENT_INVOICE_PAID) {
+            if (is_numeric($credits) && (int) $credits > 0) {
+                $this->applyCredits($userType, $userId, (int) $credits);
+            }
+
+            if ($this->isPremiumPurchase($payload) && strcasecmp($userType, 'Candidate') === 0) {
+                $this->activatePremiumBadge($userId);
+            }
+
+            return;
+        }
+
         if (is_numeric($credits) && (int) $credits > 0) {
-            $this->applyCredits($userType, $userId, (int) $credits);
+            $this->revertCredits($userType, $userId, (int) $credits);
         }
 
         if ($this->isPremiumPurchase($payload) && strcasecmp($userType, 'Candidate') === 0) {
-            $this->activatePremiumBadge($userId);
+            $this->deactivatePremiumBadge($userId);
         }
     }
 
@@ -61,6 +77,38 @@ final class SubscriptionStateManager implements PaymentObserver
         }
     }
 
+    private function revertCredits(string $userType, int $userId, int $credits): void
+    {
+        if ($credits <= 0 || $userId <= 0) {
+            return;
+        }
+
+        $timestamp = date('Y-m-d H:i:s');
+
+        if (strcasecmp($userType, 'Employer') === 0) {
+            $this->decrementCredits(Employer::query()->where('employer_id', $userId), $credits, $timestamp);
+
+            return;
+        }
+
+        if (strcasecmp($userType, 'Recruiter') === 0) {
+            $this->decrementCredits(Recruiter::query()->where('recruiter_id', $userId), $credits, $timestamp);
+        }
+    }
+
+    private function decrementCredits(Builder $query, int $credits, string $timestamp): void
+    {
+        $record = $query->first();
+        if ($record === null) {
+            return;
+        }
+
+        $current = (int) $record->getAttribute('credits_balance');
+        $record->setAttribute('credits_balance', max(0, $current - $credits));
+        $record->setAttribute('updated_at', $timestamp);
+        $record->save();
+    }
+
     /**
      * @param array<string, mixed> $payload
      */
@@ -85,6 +133,21 @@ final class SubscriptionStateManager implements PaymentObserver
         Candidate::query()->where('candidate_id', $userId)->update([
             'premium_badge' => 1,
             'premium_badge_date' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+    }
+
+    private function deactivatePremiumBadge(int $userId): void
+    {
+        if ($userId <= 0) {
+            return;
+        }
+
+        $timestamp = date('Y-m-d H:i:s');
+
+        Candidate::query()->where('candidate_id', $userId)->update([
+            'premium_badge' => 0,
+            'premium_badge_date' => null,
             'updated_at' => $timestamp,
         ]);
     }

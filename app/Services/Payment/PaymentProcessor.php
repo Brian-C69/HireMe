@@ -6,6 +6,9 @@ namespace App\Services\Payment;
 
 use App\Models\Payment;
 use App\Services\Payment\Events\GenericPaymentEvent;
+use App\Services\Payment\Observers\AccountingNotifier;
+use App\Services\Payment\Observers\InvoiceStatusUpdater;
+use App\Services\Payment\Observers\SubscriptionStateManager;
 use InvalidArgumentException;
 use SplObjectStorage;
 
@@ -14,6 +17,7 @@ final class PaymentProcessor implements PaymentEventSubject
     public const EVENT_INVOICE_PAID = 'invoice_paid';
     public const EVENT_PAYMENT_FAILED = 'payment_failed';
     public const EVENT_PAYMENT_PENDING = 'payment_pending';
+    public const EVENT_PAYMENT_REFUNDED = 'payment_refunded';
 
     /** @var array<string, SplObjectStorage<PaymentObserver, null>> */
     private array $observers = [];
@@ -34,16 +38,19 @@ final class PaymentProcessor implements PaymentEventSubject
     {
         $logFile ??= dirname(__DIR__, 3) . '/storage/logs/accounting.log';
 
-        $invoiceUpdater = new \App\Services\Payment\Observers\InvoiceUpdater();
-        $subscriptionManager = new \App\Services\Payment\Observers\SubscriptionStateManager();
-        $accountingExporter = new \App\Services\Payment\Observers\AccountingExporter($logFile);
+        $invoiceUpdater = new InvoiceStatusUpdater();
+        $subscriptionManager = new SubscriptionStateManager();
+        $accountingNotifier = new AccountingNotifier($logFile);
 
         $processor = new self();
         $processor->attach(self::EVENT_INVOICE_PAID, $invoiceUpdater);
         $processor->attach(self::EVENT_PAYMENT_FAILED, $invoiceUpdater);
+        $processor->attach(self::EVENT_PAYMENT_REFUNDED, $invoiceUpdater);
         $processor->attach(self::EVENT_INVOICE_PAID, $subscriptionManager);
-        $processor->attach(self::EVENT_INVOICE_PAID, $accountingExporter);
-        $processor->attach(self::EVENT_PAYMENT_FAILED, $accountingExporter);
+        $processor->attach(self::EVENT_PAYMENT_REFUNDED, $subscriptionManager);
+        $processor->attach(self::EVENT_INVOICE_PAID, $accountingNotifier);
+        $processor->attach(self::EVENT_PAYMENT_FAILED, $accountingNotifier);
+        $processor->attach(self::EVENT_PAYMENT_REFUNDED, $accountingNotifier);
 
         return $processor;
     }
@@ -186,6 +193,7 @@ final class PaymentProcessor implements PaymentEventSubject
         return match ($status) {
             'success', 'succeeded', 'paid', 'completed' => 'Success',
             'failed', 'failure', 'declined', 'errored' => 'Failed',
+            'refunded', 'refund', 'charge_refunded', 'reversed' => 'Refunded',
             default => 'Pending',
         };
     }
@@ -248,6 +256,7 @@ final class PaymentProcessor implements PaymentEventSubject
         return match ($status) {
             'Success' => self::EVENT_INVOICE_PAID,
             'Failed' => self::EVENT_PAYMENT_FAILED,
+            'Refunded' => self::EVENT_PAYMENT_REFUNDED,
             default => self::EVENT_PAYMENT_PENDING,
         };
     }
