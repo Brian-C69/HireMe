@@ -7,10 +7,18 @@ namespace App\Services\Modules;
 use App\Core\Request;
 use App\Models\Billing;
 use App\Models\Payment;
+use App\Services\Payment\PaymentProcessor;
 use InvalidArgumentException;
 
 final class PaymentBillingService extends AbstractModuleService
 {
+    private PaymentProcessor $processor;
+
+    public function __construct(?PaymentProcessor $processor = null)
+    {
+        $this->processor = $processor ?? PaymentProcessor::withDefaultObservers();
+    }
+
     public function name(): string
     {
         return 'payment-billing';
@@ -22,6 +30,7 @@ final class PaymentBillingService extends AbstractModuleService
             'payments' => $this->listPayments($request, $id),
             'payment' => $this->showPayment($id),
             'billing' => $this->listBilling($request, $id),
+            'charge' => $this->charge($request),
             'summary' => $this->summarise(),
             default => throw new InvalidArgumentException(sprintf('Unknown payment/billing operation "%s".', $type)),
         };
@@ -220,5 +229,138 @@ final class PaymentBillingService extends AbstractModuleService
             'admin', 'admins' => 'admins',
             default => null,
         };
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function charge(Request $request): array
+    {
+        $payload = $request->all();
+
+        $userId = $payload['user_id'] ?? null;
+        if (!is_int($userId) && !ctype_digit((string) $userId)) {
+            throw new InvalidArgumentException('A valid user identifier is required to process a payment.');
+        }
+
+        $userType = (string) ($payload['user_type'] ?? '');
+        if ($userType === '') {
+            throw new InvalidArgumentException('A user type is required to process a payment.');
+        }
+
+        if (!array_key_exists('amount', $payload)) {
+            throw new InvalidArgumentException('A payment amount must be provided.');
+        }
+
+        $metadata = $this->normaliseMetadata($payload['metadata'] ?? null);
+        $event = $this->processor->process([
+            'user_id' => (int) $userId,
+            'user_type' => $userType,
+            'amount' => $payload['amount'],
+            'purpose' => $payload['purpose'] ?? '',
+            'payment_method' => $payload['payment_method'] ?? 'manual',
+            'transaction_status' => $payload['transaction_status'] ?? ($payload['status'] ?? 'success'),
+            'transaction_id' => $payload['transaction_id'] ?? null,
+            'metadata' => $metadata,
+            'credits' => $this->normaliseCredits($payload['credits'] ?? null, $metadata),
+            'billing_id' => $this->normaliseBillingId($payload['billing_id'] ?? null),
+        ]);
+
+        $eventPayload = $event->payload();
+        $payment = $eventPayload['payment'] ?? null;
+        $paymentData = $payment instanceof Payment ? $payment->toArray() : (array) $payment;
+
+        $billing = $this->resolveBillingRecord(
+            $eventPayload,
+            (int) $userId,
+            (string) ($eventPayload['user_type'] ?? $userType)
+        );
+
+        return $this->respond([
+            'event' => $event->name(),
+            'payment' => $paymentData,
+            'billing' => $billing?->toArray(),
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $eventPayload
+     */
+    private function resolveBillingRecord(array $eventPayload, int $userId, string $userType): ?Billing
+    {
+        $billingId = $eventPayload['billing_id'] ?? null;
+        if (is_numeric($billingId)) {
+            $existing = Billing::find((int) $billingId);
+            if ($existing instanceof Billing) {
+                return $existing;
+            }
+        }
+
+        $query = Billing::query()
+            ->where('user_id', $userId)
+            ->where('user_type', $userType);
+
+        $reference = $eventPayload['transaction_id'] ?? null;
+        if (is_string($reference) && $reference !== '') {
+            $query->where('reference_number', $reference);
+        }
+
+        return $query->orderByDesc('transaction_date')->first();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function normaliseMetadata(mixed $metadata): array
+    {
+        if (is_array($metadata)) {
+            return $metadata;
+        }
+
+        if (is_string($metadata) && $metadata !== '') {
+            $decoded = json_decode($metadata, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * @param array<string, mixed> $metadata
+     */
+    private function normaliseCredits(mixed $credits, array $metadata): ?int
+    {
+        if ($credits === null && isset($metadata['credits'])) {
+            $credits = $metadata['credits'];
+        }
+
+        if ($credits === null) {
+            return null;
+        }
+
+        if (is_int($credits)) {
+            return $credits;
+        }
+
+        if (is_numeric($credits)) {
+            return (int) $credits;
+        }
+
+        return null;
+    }
+
+    private function normaliseBillingId(mixed $billingId): ?int
+    {
+        if ($billingId === null) {
+            return null;
+        }
+
+        if (is_int($billingId)) {
+            return $billingId;
+        }
+
+        return ctype_digit((string) $billingId) ? (int) $billingId : null;
     }
 }
