@@ -113,7 +113,6 @@ final class UserManagementService extends AbstractModuleService
                 throw new InvalidArgumentException('User record not found.');
             }
 
-
             [$related, $includes] = $this->loadRelatedData($request, $role, $userId);
 
             $payload = [
@@ -130,12 +129,6 @@ final class UserManagementService extends AbstractModuleService
             }
 
             return $this->respond($payload);
-
-            return $this->respond([
-                'role' => $role,
-                'user' => $user->toArray(),
-            ]);
-
         }
 
         foreach (self::ROLE_MODELS as $role => $modelClass) {
@@ -248,16 +241,6 @@ final class UserManagementService extends AbstractModuleService
         }
 
         return [$related, $includes];
-
-                return $this->respond([
-                    'role' => $role,
-                    'user' => $user->toArray(),
-                ]);
-            }
-        }
-
-        throw new InvalidArgumentException('User record not found.');
-
     }
 
     /**
