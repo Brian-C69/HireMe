@@ -158,7 +158,7 @@ final class JobApplicationService extends AbstractModuleService
             }
         }
 
-        $applications = $query->orderByDesc('created_at')->get();
+        $applications = $query->orderByDesc('application_date')->get();
 
         $items = $applications->map(static function (Application $application): array {
             $data = $application->toArray();
@@ -220,7 +220,7 @@ final class JobApplicationService extends AbstractModuleService
         $closedJobs = JobPosting::query()->whereIn('status', ['closed', 'archived'])->count();
 
         $totalApplications = Application::query()->count();
-        $recentApplications = Application::query()->orderByDesc('created_at')->take(5)->get();
+        $recentApplications = Application::query()->orderByDesc('application_date')->take(5)->get();
         $recent = $recentApplications->map(static function (Application $application): array {
             return $application->toArray();
         })->all();
