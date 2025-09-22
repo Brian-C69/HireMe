@@ -9,19 +9,24 @@ use App\Services\Payment\PaymentEvent;
 use App\Services\Payment\PaymentObserver;
 use App\Services\Payment\PaymentProcessor;
 
-final class InvoiceUpdater implements PaymentObserver
+final class InvoiceStatusUpdater implements PaymentObserver
 {
     public function handle(PaymentEvent $event): void
     {
         if (!in_array($event->name(), [
             PaymentProcessor::EVENT_INVOICE_PAID,
             PaymentProcessor::EVENT_PAYMENT_FAILED,
+            PaymentProcessor::EVENT_PAYMENT_REFUNDED,
         ], true)) {
             return;
         }
 
         $payload = $event->payload();
-        $status = $event->name() === PaymentProcessor::EVENT_INVOICE_PAID ? 'paid' : 'failed';
+        $status = match ($event->name()) {
+            PaymentProcessor::EVENT_INVOICE_PAID => 'paid',
+            PaymentProcessor::EVENT_PAYMENT_REFUNDED => 'refunded',
+            default => 'failed',
+        };
         $transactionDate = (string) ($payload['processed_at'] ?? date('Y-m-d H:i:s'));
 
         $attributes = [
@@ -35,9 +40,14 @@ final class InvoiceUpdater implements PaymentObserver
         }
 
         $billing = $this->findExistingBilling($payload, $attributes);
+        $amount = (float) ($payload['amount'] ?? 0);
+        if ($status === 'refunded') {
+            $amount *= -1;
+        }
+
         $billing->fill(array_merge($attributes, [
             'transaction_type' => $this->normaliseTransactionType((string) ($payload['purpose'] ?? '')),
-            'amount' => (float) ($payload['amount'] ?? 0),
+            'amount' => $amount,
             'payment_method' => (string) ($payload['payment_method'] ?? 'manual'),
             'status' => $status,
             'transaction_date' => $transactionDate,
