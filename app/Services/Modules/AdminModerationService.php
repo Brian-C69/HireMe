@@ -4,17 +4,27 @@ declare(strict_types=1);
 
 namespace App\Services\Modules;
 
-
 use App\Core\Request;
-
-use App\Models\Candidate;
-use App\Models\Employer;
-use App\Models\JobPosting;
-use App\Models\Payment;
+use App\Services\Admin\Moderation\AdminRequestAuthorizer;
+use App\Services\Admin\Moderation\Commands\ApproveJobCommand;
+use App\Services\Admin\Moderation\Commands\AuditLogCommand;
+use App\Services\Admin\Moderation\Commands\MetricsCommand;
+use App\Services\Admin\Moderation\Commands\OverviewCommand;
+use App\Services\Admin\Moderation\Commands\ReinstateUserCommand;
+use App\Services\Admin\Moderation\Commands\SuspendUserCommand;
+use App\Services\Admin\Moderation\ErrorLogModerationLogger;
+use App\Services\Admin\Moderation\ModerationCommandBus;
+use App\Services\Admin\Moderation\ModerationCommandResult;
+use App\Services\Admin\Moderation\ModerationSuspensionStore;
+use App\Services\Admin\Moderation\UserLookup;
+use DateTimeImmutable;
 use InvalidArgumentException;
 
 final class AdminModerationService extends AbstractModuleService
 {
+    private ?ModerationSuspensionStore $suspensionStore = null;
+    private ?UserLookup $userLookup = null;
+
     public function name(): string
     {
         return 'admin-moderation';
@@ -22,150 +32,178 @@ final class AdminModerationService extends AbstractModuleService
 
     public function handle(string $type, ?string $id, Request $request): array
     {
-        return match (strtolower($type)) {
-            'overview' => $this->overview(),
-            'metrics' => $this->metrics(),
-            'audit' => $this->auditLog(),
+        $bus = $this->makeCommandBus($request);
+        $type = strtolower($type);
+
+        return match ($type) {
+            'overview' => $this->respond($bus->dispatch(new OverviewCommand($this->registry, $this->suspensionStore()))->data()),
+            'metrics' => $this->respond($bus->dispatch(new MetricsCommand($this->suspensionStore()))->data()),
+            'audit' => $this->respond($bus->dispatch(new AuditLogCommand($this->registry, $this->suspensionStore()))->data()),
+            'approve-job' => $this->respondFromResult($bus->dispatch($this->makeApproveJobCommand($request, $id))),
+            'suspend-user' => $this->respondFromResult($bus->dispatch($this->makeSuspendUserCommand($request))),
+            'reinstate-user' => $this->respondFromResult($bus->dispatch($this->makeReinstateUserCommand($request))),
             default => throw new InvalidArgumentException(sprintf('Unknown administration operation "%s".', $type)),
         };
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    private function overview(): array
+    private function makeCommandBus(Request $request): ModerationCommandBus
     {
-        $userSnapshot = $this->forward('user-management', 'users', 'all');
-        $jobSnapshot = $this->forward('job-application', 'summary', 'all');
-        $financeSnapshot = $this->forward('payment-billing', 'summary', 'all');
+        return new ModerationCommandBus(
+            new AdminRequestAuthorizer($request),
+            new ErrorLogModerationLogger()
+        );
+    }
 
-        $pendingVerifications = Candidate::query()->where('verified_status', 'pending')->count();
-        $flaggedJobs = JobPosting::query()->whereIn('status', ['flagged', 'under_review'])->count();
-
+    private function respondFromResult(ModerationCommandResult $result): array
+    {
         return $this->respond([
-            'overview' => [
-                'users' => $userSnapshot,
-                'jobs' => $jobSnapshot['summary'] ?? [],
-                'finance' => $financeSnapshot['summary'] ?? [],
-                'pending_verifications' => $pendingVerifications,
-                'flagged_jobs' => $flaggedJobs,
-            ],
+            'result' => $result->toArray(),
         ]);
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    private function metrics(): array
+    private function makeApproveJobCommand(Request $request, ?string $id): ApproveJobCommand
     {
-        $candidateCount = Candidate::query()->count();
-        $employerCount = Employer::query()->count();
-        $jobCount = JobPosting::query()->count();
-        $activeJobs = JobPosting::query()->whereIn('status', ['active', 'open'])->count();
-        $failedPayments = Payment::query()->where('transaction_status', 'failed')->count();
+        $jobId = $this->requireIntId($id, 'A job identifier is required.');
 
-        return $this->respond([
-            'metrics' => [
-                'users' => [
-                    'candidates' => $candidateCount,
-                    'employers' => $employerCount,
-                ],
-                'jobs' => [
-                    'total' => $jobCount,
-                    'active' => $activeJobs,
-                ],
-                'payments' => [
-                    'failed' => $failedPayments,
-                ],
-            ],
-        ]);
+        return new ApproveJobCommand($jobId, $this->moderatorId($request));
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    private function auditLog(): array
+    private function makeSuspendUserCommand(Request $request): SuspendUserCommand
     {
-        $pendingCandidates = Candidate::query()
-            ->where('verified_status', 'pending')
-            ->orderByDesc('created_at')
-            ->take(10)
-            ->get()
-            ->map(function (Candidate $candidate): array {
-                $user = $this->forward('user-management', 'user', (string) $candidate->candidate_id, [
-                    'role' => 'candidates',
-                ]);
-                return [
-                    'candidate' => $candidate->toArray(),
-                    'user' => $user['user'] ?? null,
-                ];
-            })
-            ->all();
+        $role = $this->requireUserRole($request);
+        $userId = $this->requireUserId($request);
+        $until = $this->parseSuspensionUntil($request);
+        $reason = $this->suspensionReason($request);
 
-        $flaggedJobs = JobPosting::query()
-            ->whereIn('status', ['flagged', 'under_review'])
-            ->orderByDesc('updated_at')
-            ->take(10)
-            ->get()
-            ->map(function (JobPosting $job): array {
-                $employer = null;
-                if ($job->company_id !== null) {
-                    $employer = $this->forward('user-management', 'user', (string) $job->company_id, [
-                        'role' => 'employers',
-                    ]);
+        return new SuspendUserCommand(
+            $role,
+            $userId,
+            $this->suspensionStore(),
+            $this->userLookup(),
+            $until,
+            $reason,
+            $this->moderatorId($request)
+        );
+    }
+
+    private function makeReinstateUserCommand(Request $request): ReinstateUserCommand
+    {
+        $role = $this->requireUserRole($request);
+        $userId = $this->requireUserId($request);
+
+        return new ReinstateUserCommand(
+            $role,
+            $userId,
+            $this->suspensionStore(),
+            $this->userLookup(),
+            $this->moderatorId($request)
+        );
+    }
+
+    private function suspensionStore(): ModerationSuspensionStore
+    {
+        if ($this->suspensionStore === null) {
+            $this->suspensionStore = new ModerationSuspensionStore();
+        }
+
+        return $this->suspensionStore;
+    }
+
+    private function userLookup(): UserLookup
+    {
+        if ($this->userLookup === null) {
+            $this->userLookup = new UserLookup();
+        }
+
+        return $this->userLookup;
+    }
+
+    private function moderatorId(Request $request): ?int
+    {
+        $candidates = [
+            $request->header('X-Admin-Id'),
+            $request->header('X-Moderator-Id'),
+            $request->input('moderator_id'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_int($candidate) && $candidate > 0) {
+                return $candidate;
+            }
+
+            if (is_string($candidate) && ctype_digit($candidate)) {
+                $value = (int) $candidate;
+                if ($value > 0) {
+                    return $value;
                 }
+            }
+        }
 
-                return [
-                    'job' => $job->toArray(),
-                    'employer' => $employer['user'] ?? null,
-                ];
-            })
-            ->all();
-
-        $failedPayments = Payment::query()
-            ->where('transaction_status', 'failed')
-            ->orderByDesc('created_at')
-            ->take(10)
-            ->get()
-            ->map(function (Payment $payment): array {
-                $user = null;
-                if ($payment->user_id !== null) {
-                    $role = $this->roleForUserType($payment->user_type);
-                    if ($role !== null) {
-                        $user = $this->forward('user-management', 'user', (string) $payment->user_id, [
-                            'role' => $role,
-                        ]);
-                    }
-                }
-
-                return [
-                    'payment' => $payment->toArray(),
-                    'user' => $user['user'] ?? null,
-                ];
-            })
-            ->all();
-
-        return $this->respond([
-            'audit' => [
-                'candidates' => $pendingCandidates,
-                'jobs' => $flaggedJobs,
-                'payments' => $failedPayments,
-            ],
-        ]);
+        return null;
     }
 
-    private function roleForUserType(mixed $userType): ?string
+    private function requireUserRole(Request $request): string
     {
-        if (!is_string($userType) || $userType === '') {
+        $role = $request->input('role') ?? $request->input('user_role');
+        if (is_array($role)) {
+            $role = reset($role);
+        }
+
+        if (!is_string($role) || trim($role) === '') {
+            throw new InvalidArgumentException('A user role is required.');
+        }
+
+        return $role;
+    }
+
+    private function requireUserId(Request $request): int
+    {
+        $identifier = $request->input('user_id') ?? $request->input('id') ?? $request->input('target_id');
+        if (is_array($identifier)) {
+            $identifier = reset($identifier);
+        }
+
+        if (is_int($identifier)) {
+            if ($identifier > 0) {
+                return $identifier;
+            }
+            throw new InvalidArgumentException('A valid user identifier is required.');
+        }
+
+        if (!is_string($identifier) || !ctype_digit($identifier)) {
+            throw new InvalidArgumentException('A valid user identifier is required.');
+        }
+
+        return (int) $identifier;
+    }
+
+    private function parseSuspensionUntil(Request $request): ?DateTimeImmutable
+    {
+        $value = $request->input('until') ?? $request->input('suspend_until');
+        if (is_array($value)) {
+            $value = reset($value);
+        }
+
+        if ($value === null) {
             return null;
         }
 
-        return match (strtolower($userType)) {
-            'candidate', 'candidates' => 'candidates',
-            'employer', 'employers' => 'employers',
-            'recruiter', 'recruiters' => 'recruiters',
-            'admin', 'admins' => 'admins',
-            default => null,
-        };
+        return SuspendUserCommand::parseUntil(is_string($value) ? $value : (string) $value);
+    }
+
+    private function suspensionReason(Request $request): ?string
+    {
+        $reason = $request->input('reason') ?? $request->input('note');
+        if (is_array($reason)) {
+            $reason = reset($reason);
+        }
+
+        if (!is_string($reason)) {
+            return null;
+        }
+
+        $reason = trim($reason);
+
+        return $reason === '' ? null : $reason;
     }
 }
