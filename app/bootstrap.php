@@ -75,11 +75,70 @@ set_exception_handler(function (\Throwable $e) use ($debug): void {
 date_default_timezone_set($_ENV['APP_TZ'] ?? 'Asia/Kuala_Lumpur');
 
 // -----------------------------------------------------------------------------
-// Session
+// Session (secure cookie settings + inactivity timeout)
 // -----------------------------------------------------------------------------
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+$now = time();
+$timeoutSeconds = (int) ($_ENV['SESSION_TIMEOUT'] ?? 900);
+if ($timeoutSeconds <= 0) {
+    $timeoutSeconds = 900; // sensible default (15 minutes)
 }
+
+$cookieParams = session_get_cookie_params();
+$isSecure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+$sameSiteEnv = (string) ($_ENV['SESSION_SAMESITE'] ?? 'Strict');
+$allowedSameSites = ['lax', 'strict', 'none'];
+$normalisedSameSite = strtolower($sameSiteEnv);
+if (!in_array($normalisedSameSite, $allowedSameSites, true)) {
+    $normalisedSameSite = 'strict';
+}
+$sessionOptions = [
+    'cookie_lifetime' => 0,
+    'cookie_path' => $cookieParams['path'] ?? '/',
+    'cookie_secure' => (($cookieParams['secure'] ?? false) || $isSecure),
+    'cookie_httponly' => true,
+    'cookie_samesite' => ucfirst($normalisedSameSite),
+    'use_strict_mode' => 1,
+    'gc_maxlifetime' => max($timeoutSeconds, (int) ini_get('session.gc_maxlifetime')),
+];
+if (!empty($cookieParams['domain'])) {
+    $sessionOptions['cookie_domain'] = $cookieParams['domain'];
+}
+
+$startSession = static function () use ($sessionOptions): void {
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_start($sessionOptions);
+    }
+};
+
+$startSession();
+
+if (isset($_SESSION['user'])) {
+    $lastActivity = $_SESSION['last_activity'] ?? null;
+    if (is_int($lastActivity) && ($now - $lastActivity) > $timeoutSeconds) {
+        $_SESSION = [];
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            if (ini_get('session.use_cookies')) {
+                $params = session_get_cookie_params();
+                setcookie(session_name(), '', [
+                    'expires' => $now - 42000,
+                    'path' => $params['path'] ?? '/',
+                    'domain' => $params['domain'] ?? '',
+                    'secure' => $params['secure'] ?? false,
+                    'httponly' => $params['httponly'] ?? true,
+                    'samesite' => $params['samesite'] ?? 'Strict',
+                ]);
+            }
+            session_destroy();
+        }
+        $startSession();
+        $_SESSION['flash'] = [
+            'type' => 'warning',
+            'message' => 'Your session expired due to inactivity. Please log in again.',
+        ];
+    }
+}
+
+$_SESSION['last_activity'] = $now;
 
 // -----------------------------------------------------------------------------
 // Base URL calculation
