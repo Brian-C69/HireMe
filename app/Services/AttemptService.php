@@ -8,7 +8,7 @@ use App\Core\DB;
 
 final class AttemptService
 {
-    private const MAX_ATTEMPTS = 3;
+    public const MAX_ATTEMPTS = 3;
     private const LOCK_MINUTES = 15;
 
     public function isLockedOut(PDO $pdo, string $email, string $ip): bool
