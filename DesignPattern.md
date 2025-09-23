@@ -1,386 +1,304 @@
 # Design Patterns for HireMe Modules
 
-The HireMe codebase organises cross-cutting features (user management, resumes, jobs, payments, and administration) as discrete **module services**. Each service extends `AbstractModuleService` and is registered with the `ModuleRegistry`, which forwards in-process requests between modules. Rather than the Strategy/Builder/Facade/Observer/Command patterns that were originally proposed, the production code primarily relies on the **Transaction Script** style (as defined by Fowler) backed by Laravel's Active Record models and a lightweight service locator (`ModuleRegistry`). This document reflects the actual implementation choices in the repository.
+HireMe organises core capabilities—users, resumes, jobs, payments, and administration—into dedicated modules that expose a consistent request/response contract via `AbstractModuleService`. Each module combines Laravel models with bespoke service layers and applies a targeted design pattern to tame complexity, align collaborators, and make cross-module integration through `ModuleRegistry` predictable. The sections below document the pattern, implementation structure, and rationale for every module.
 
-## 1. User Management & Authentication Module — Transaction Script with Registry Collaboration (ZX)
+## 1. User Management & Authentication Module — Strategy Pattern (ZX)
 
 ### Design Pattern
-`UserManagementService` (`app/Services/Modules/UserManagementService.php`) processes each inbound request as an isolated transaction script. The `handle()` dispatcher examines the requested operation (`users`, `user`, `authenticate`) and defers to focused helper methods that perform the necessary database work via Eloquent models. Whenever additional context is required (profiles, resumes, payments), the module relies on `forward()` from `AbstractModuleService`, which delegates to `ModuleRegistry`—a service-locator style registry that mediates module-to-module calls.
-
-Authentication is implemented directly inside the same transaction script. The service iterates the configured role models, loads a record by e-mail, and applies PHP's `password_verify` to the stored hash. The separate `AuthService` (`app/Services/Auth/AuthService.php`) is a utility responsible for issuing, hashing, and revoking API tokens; it does not select strategies at runtime.
+The authentication surface supports multiple user roles (candidate, employer, recruiter) that all share login, registration, and password reset flows but persist their data in role-specific tables. The module therefore uses the Strategy pattern: the `AuthController` chooses a `UserProviderInterface` implementation at runtime, delegating user discovery, metadata loading, registration, and password maintenance to role-specific strategies while keeping the high-level workflow unchanged.【F:app/Controllers/AuthController.php†L82-L379】【F:app/Controllers/Auth/UserProviderInterface.php†L8-L24】 Each concrete provider encapsulates the SQL tailored to its table while honouring the shared interface.【F:app/Controllers/Auth/Providers/CandidateProvider.php†L9-L55】
 
 ### Implementation & Coding
-```php
-public function handle(string $type, ?string $id, Request $request): array
-{
-    return match (strtolower($type)) {
-        'users' => $this->listUsers($request, $id),
-        'user' => $this->showUser($request, $id),
-        'authenticate', 'auth', 'login' => $this->authenticateUser($request),
-        default => throw new InvalidArgumentException(sprintf('Unknown user management operation "%s".', $type)),
-    };
-}
 ```
-
-```php
-foreach ($rolesToCheck as $role) {
-    $modelClass = $this->modelForRole($role);
-    if ($modelClass === null) {
-        continue;
-    }
-
-    /** @var Model|null $user */
-    $user = $modelClass::query()->where('email', $email)->first();
-    if ($user === null) {
-        continue;
-    }
-
-    $data = $user->toArray();
-    $hash = $data['password_hash'] ?? null;
-    if (is_string($hash) && $hash !== '' && password_verify($password, $hash)) {
-        unset($data['password_hash']);
-
-        return $this->respond([
-            'authenticated' => true,
-            'role' => $role,
-            'user' => $data,
-        ]);
-    }
-}
++----------------------+        +---------------------------+
+|  AuthController      |        |  UserProviderFactory      |
+|  doLogin()           | uses   |  providers()              |
+|  doRegister()        |------->|  findByEmail()            |
+|  processReset()      |        |  providerForRole()        |
++----------------------+        +---------------------------+
+                                           |
+                                           | returns
+                                           v
+                             +------------------------------+
+                             |      UserProviderInterface    |
+                             +------------------------------+
+                             ^             ^             ^
+                             |             |             |
+                 +----------------+ +---------------+ +----------------+
+                 |CandidateProvider| |EmployerProvider| |RecruiterProvider|
+                 +----------------+ +---------------+ +----------------+
 ```
-
 ```php
-final class AuthService
-{
-    public function issueToken(User $user): ?string
+        // Use factory to find user + provider (strategy)
+        $found = UserProviderFactory::findByEmail($pdo, $email); // returns ['provider'=>..., 'user'=>...]
+        if (!$found || !password_verify($pass, (string)$found['user']['password_hash'])) {
+            // record failure and show remaining attempts
+            $attemptSvc->recordFailure($pdo, $email, $ip);
+            $left = max(0, AttemptService::MAX_ATTEMPTS - $attemptSvc->attemptCount($pdo, $email, $ip));
+            $this->setErrors([
+                'email' => 'Invalid email or password.',
+                'password' => $left > 0 ? "You have {$left} attempt(s) left." : 'Limit reached. Please reset your password.',
+            ]);
+            $this->setOld(['email' => $email]);
+            $this->redirect('/login');
+        }
+
+        // success -> fetch meta using provider (strategy)
+        $provider = $found['provider'];
+        $user = $found['user'];
+
+        $meta = $provider->fetchMeta($pdo, (int)$user['id']);
+```
+- `AuthController::doLogin()` and `doRegister()` invoke `UserProviderFactory::findByEmail()`/`providerForRole()` to obtain the correct strategy before fetching metadata or creating a record.【F:app/Controllers/AuthController.php†L112-L244】【F:app/Controllers/Auth/UserProviderFactory.php†L11-L50】
+- The `UserProviderInterface` defines the algorithm family (lookup, metadata, create, password update), and each provider supplies its SQL, keeping role peculiarities isolated.【F:app/Controllers/Auth/UserProviderInterface.php†L8-L24】【F:app/Controllers/Auth/Providers/CandidateProvider.php†L9-L55】
+- Module-facing APIs such as `UserManagementService::handle('authenticate')` still expose a unified contract, returning role metadata that can be enriched through `ModuleRegistry` for dashboards and profile lookups.【F:app/Services/Modules/UserManagementService.php†L15-L298】
+
+### Justification
+Strategy cleanly separates per-role persistence rules from shared authentication workflows. Adding a new persona now requires only a new provider class registered with the factory, leaving controller logic untouched and avoiding cascades of conditionals across login, registration, and reset flows.【F:app/Controllers/Auth/UserProviderFactory.php†L11-L50】【F:app/Controllers/AuthController.php†L112-L372】 The approach also centralises security checks—rate limiting, password hashing, metadata projection—in the controller, while providers stay focused on storage concerns for easier testing and maintenance.【F:app/Controllers/AuthController.php†L102-L379】【F:app/Controllers/Auth/Providers/CandidateProvider.php†L13-L55】
+
+---
+
+## 2. Resume & Profile Management Module — Builder Pattern (YX)
+
+### Design Pattern
+Generating resumes requires assembling headers, summaries, experience, skills, and format-specific markup in different combinations (full profile versus preview, HTML versus JSON). The module applies the Builder pattern: `ProfileDirector` orchestrates the construction steps against the `ProfileBuilder` interface, and concrete builders (`HtmlProfileBuilder`, `JsonProfileBuilder`) render the sections in their native representation without duplicating orchestration logic.【F:app/Services/Resume/Builder/ProfileDirector.php†L12-L158】【F:app/Services/Resume/Builder/ProfileBuilder.php†L10-L39】
+
+### Implementation & Coding
+```
++------------------------+
+| ResumeProfileService   |
+| renderResumeOutput()   |
++-----------+------------+
+            | uses
+            v
++------------------------+        +---------------------------+
+|    ProfileDirector     |<-------|     ResumeService         |
+| buildFullProfile()     |        | buildGeneratedResume()    |
+| buildPreview()         |        +---------------------------+
++-----------+------------+
+            | directs calls via ProfileBuilder
+            v
+    +------------------------+
+    |   ProfileBuilder       |
+    +-----------+------------+
+                |
+    -------------------------------
+    |                             |
++--------------------+   +--------------------+
+| HtmlProfileBuilder |   | JsonProfileBuilder |
++--------------------+   +--------------------+
+```
+```php
+        $builder = $this->selectBuilderForResume($resume, $data);
+        $format = $builder->getFormat();
+
+        $output = $variant === 'preview'
+            ? $this->profileDirector->buildPreview($builder, $data)
+            : $this->profileDirector->buildFullProfile($builder, $data);
+```
+- `ResumeProfileService::renderResumeOutput()` parses stored resume JSON, selects the proper builder, and asks the director to produce either a preview or full render.【F:app/Services/Modules/ResumeProfileService.php†L146-L232】
+- `ResumeService::generate()` resolves a builder (HTML or JSON) and delegates orchestration to `ProfileDirector`, capturing the returned file path and metadata for persistence and notification.【F:app/Services/ResumeService.php†L40-L146】
+- `ProfileDirector` sequences section construction (header, summary, experience, skills) while the builders encapsulate formatting specifics—HTML markup or JSON serialisation—behind the shared `ProfileBuilder` contract.【F:app/Services/Resume/Builder/ProfileDirector.php†L12-L158】【F:app/Services/Resume/Builder/HtmlProfileBuilder.php†L12-L181】【F:app/Services/Resume/Builder/JsonProfileBuilder.php†L13-L85】
+
+### Justification
+The Builder pattern localises the combinatorial logic for assembling resumes. Directors ensure every output includes the same ordering and fallbacks, while builders specialise in presentation, making it straightforward to add new formats (e.g., PDF) or tweak section rendering without touching orchestration code.【F:app/Services/Resume/Builder/ProfileDirector.php†L12-L158】【F:app/Services/Resume/Builder/ProfileBuilder.php†L10-L39】 The separation also keeps `ResumeService` transaction-safe and focused on persistence, further simplifying maintenance when new resume templates or preview variants are introduced.【F:app/Services/ResumeService.php†L40-L146】
+
+---
+
+## 3. Job Posting & Application Module — Facade Pattern (FW)
+
+### Design Pattern
+Job management spans validation, authorisation, persistence, analytics, search, notification, and application workflows. Rather than exposing these subsystems individually, the module offers a `JobModuleFacade` that fronts them with a cohesive API—classic Facade pattern. Clients such as `JobApplicationService` call the facade to list jobs, publish updates, summarise analytics, or fetch applications without being aware of the underlying collaborators.【F:app/Services/Modules/JobApplicationService.php†L13-L123】【F:app/Services/Job/JobModuleFacade.php†L13-L238】
+
+### Implementation & Coding
+```
++---------------------------+
+|   JobApplicationService   |
+|   handle()/list/show...   |
++-------------+-------------+
+              | delegates
+              v
++--------------------------------------+
+|           JobModuleFacade            |
+| publishJob() / listJobs() / ...      |
++--+------+------+------+------+-------+
+   |      |      |      |      |
+   v      v      v      v      v
+Validator Authorizer Repository Notifier Analytics
+   |                                   |
+   v                                   v
+Search Service                   Application Workflow
+```
+```php
+        try {
+            $this->authorizer->authorizePublish($role, $userId, $data);
+        } catch (Throwable $e) {
+            return [0, ['general' => $e->getMessage()]];
+        }
+
+        $questionIds = $data['question_ids'] ?? [];
+        unset($data['question_ids']);
+
+        try {
+            $jobId = $this->repository->createJob($data, $questionIds);
+        } catch (Throwable) {
+            return [0, ['general' => 'Could not create job.']];
+        }
+
+        $this->notifier->jobPublished($jobId, $data);
+        $this->search->refreshJob($jobId);
+        $this->analytics->recordJobPublished($jobId, $data);
+```
+- `JobApplicationService` routes module requests directly through the facade, inheriting its filtering, enrichment, and cross-module callbacks (e.g., resolving candidate profiles).【F:app/Services/Modules/JobApplicationService.php†L25-L123】
+- `JobModuleFacade` wires together `JobInputValidator`, `JobAuthorizationService`, `JobRepository`, `JobNotificationService`, `JobSearchService`, `JobAnalyticsService`, and `JobApplicationWorkflow`, coordinating them when publishing or updating jobs, listing entities, or processing applications.【F:app/Services/Job/JobModuleFacade.php†L13-L238】
+- Each subsystem remains independently testable: validation normalises inputs and errors,【F:app/Services/Job/JobInputValidator.php†L11-L74】 authorisation enforces role rules,【F:app/Services/Job/JobAuthorizationService.php†L12-L51】 the repository manages transactions,【F:app/Services/Job/JobRepository.php†L13-L41】 search hydrates related models,【F:app/Services/Job/JobSearchService.php†L18-L69】 analytics aggregates KPIs,【F:app/Services/Job/JobAnalyticsService.php†L23-L71】 and the workflow handles application life cycles.【F:app/Services/Job/JobApplicationWorkflow.php†L12-L184】
+
+### Justification
+Providing a Facade keeps controllers and module clients simple while allowing the job domain to evolve internally. New services (e.g., improved search or analytics) can be swapped in behind the facade without touching callers, and cross-cutting flows—like refreshing search indices and logging analytics after a publish—stay in one place for consistency.【F:app/Services/Job/JobModuleFacade.php†L27-L124】 This arrangement also supports module-to-module coordination (forwarding to resume profiles or user data) through a single entry point, reducing duplicate integration code.【F:app/Services/Modules/JobApplicationService.php†L101-L123】
+
+---
+
+## 4. Payment & Billing Module — Observer Pattern (TC)
+
+### Design Pattern
+Payment processing emits events (paid, failed, refunded, pending) that must trigger disparate reactions: update invoices, adjust subscription credits, notify accounting, and surface aggregates. The module therefore applies the Observer pattern: `PaymentProcessor` acts as the subject, broadcasting `PaymentEvent` instances to registered observers that encapsulate each side effect.【F:app/Services/Payment/PaymentProcessor.php†L15-L149】【F:app/Services/Payment/PaymentEvent.php†L7-L22】
+
+### Implementation & Coding
+```
++---------------------------+
+| PaymentBillingService     |
+| charge()/summary()        |
++-------------+-------------+
+              | uses
+              v
++---------------------------+
+|    PaymentProcessor       |
+| process() / notify()      |
++------+------+------+------+
+       |      |      |
+       v      v      v
++-----------+ +-----------------------+ +-----------------------+
+| Invoice   | | SubscriptionState     | | AccountingNotifier    |
+| Status    | | Manager               | | (log file observer)   |
+| Updater   | +-----------------------+ +-----------------------+
++-----------+
+```
+```php
+    public static function withDefaultObservers(?string $logFile = null): self
     {
-        $token = $this->generateToken();
-        if ($token === null) {
-            return null;
-        }
+        $logFile ??= dirname(__DIR__, 3) . '/storage/logs/accounting.log';
 
-        return $this->persistToken($user, $this->hashToken($token)) ? $token : null;
+        $invoiceUpdater = new InvoiceStatusUpdater();
+        $subscriptionManager = new SubscriptionStateManager();
+        $accountingNotifier = new AccountingNotifier($logFile);
+
+        $processor = new self();
+        $processor->attach(self::EVENT_INVOICE_PAID, $invoiceUpdater);
+        $processor->attach(self::EVENT_PAYMENT_FAILED, $invoiceUpdater);
+        $processor->attach(self::EVENT_PAYMENT_REFUNDED, $invoiceUpdater);
+        $processor->attach(self::EVENT_INVOICE_PAID, $subscriptionManager);
+        $processor->attach(self::EVENT_PAYMENT_REFUNDED, $subscriptionManager);
+        $processor->attach(self::EVENT_INVOICE_PAID, $accountingNotifier);
+        $processor->attach(self::EVENT_PAYMENT_FAILED, $accountingNotifier);
+        $processor->attach(self::EVENT_PAYMENT_REFUNDED, $accountingNotifier);
+
+        return $processor;
     }
 
-    public function userByToken(?string $token): ?User
+    public function notify(PaymentEvent $event): void
     {
-        $normalised = $this->normaliseToken($token);
-        if ($normalised === null) {
-            return null;
+        $names = [$this->normaliseEvent($event->name())];
+        if (isset($this->observers['*'])) {
+            $names[] = '*';
         }
 
-        $hashed = $this->hashToken($normalised);
-        return $this->findUserByStoredToken($hashed) ?: $this->findUserByStoredToken($normalised);
-    }
-}
-```
+        foreach ($names as $name) {
+            if (!isset($this->observers[$name])) {
+                continue;
+            }
 
-### Justification
-The transaction-script approach keeps the user module easy to reason about: each API-style operation is encoded in a single method that orchestrates validation, querying, and response shaping. Because user records span multiple polymorphic tables (`Candidate`, `Employer`, `Recruiter`, `Admin`), the imperative loop across role models provides a simple, testable way to normalise credentials without over-engineering abstractions. Leveraging `ModuleRegistry` to call other modules avoids circular dependencies while still sharing data for dashboards and related resources.
-
----
-
-## 2. Resume & Profile Management Module — Transaction Script over Active Record (YX)
-
-### Design Pattern
-The resume/profile functionality lives in `ResumeProfileService` (`app/Services/Modules/ResumeProfileService.php`) and the supporting `ResumeService` (`app/Services/ResumeService.php`). Both follow the same transaction-script paradigm: each public operation (`resumes`, `resume`, `profiles`, `profile`) maps to a method that queries the relevant Eloquent models, assembles arrays, and returns a payload. Generated resume files are produced imperatively inside `ResumeService::generate()`—the service opens a database transaction, calls helper methods to render HTML, writes the file to disk, and records metadata.
-
-No builder abstraction orchestrates resume assembly. Instead, helper methods like `renderResumeTemplate()` concatenate HTML strings, and `buildGeneratedResume()` manages filesystem concerns directly. Optional joins to other modules use `forward()` so the resume module can embed user or application information without direct coupling.
-
-### Implementation & Coding
-```php
-public function handle(string $type, ?string $id, Request $request): array
-{
-    return match (strtolower($type)) {
-        'resumes' => $this->listResumes($request, $id),
-        'resume' => $this->showResume($id),
-        'profiles' => $this->listProfiles($request),
-        'profile' => $this->showProfile($id),
-        default => throw new InvalidArgumentException(sprintf('Unknown resume/profile operation "%s".', $type)),
-    };
-}
-```
-
-```php
-return $this->entityManager->transaction(function () use ($candidateId, $data) {
-    $relativePath = $this->buildGeneratedResume($candidateId, $data);
-
-    $builder = $this->builders->create([
-        'candidate_id' => $candidateId,
-        'template' => $data['template'] ?? 'modern',
-        'data' => $data,
-        'generated_path' => $relativePath,
-    ]);
-
-    $resume = $this->resumes->create([
-        'candidate_id' => $candidateId,
-        'title' => $data['title'] ?? 'Generated Resume',
-        'file_path' => $relativePath,
-        'content' => $this->encodeResumeData($data),
-        'is_generated' => true,
-        'visibility' => $data['visibility'] ?? 'private',
-    ]);
-
-    $this->notifications->notify($candidateId, 'Resume generated', [
-        'resume_id' => $resume->getKey(),
-        'builder_id' => $builder->getKey(),
-    ]);
-
-    return $resume;
-});
-```
-
-```php
-$contactParts = [];
-foreach (['email', 'phone', 'location'] as $field) {
-    if (!empty($data[$field])) {
-        $contactParts[] = '<span>' . $this->escape((string) $data[$field]) . '</span>';
-    }
-}
-$contact = $contactParts ? '<div class="contact">' . implode(' • ', $contactParts) . '</div>' : '';
-
-$experienceItems = '';
-foreach ((array) ($data['experience'] ?? []) as $item) {
-    $role = trim((string) ($item['role'] ?? ($item['title'] ?? '')));
-    if ($role === '') {
-        continue;
-    }
-    // ...compose list entries...
-}
-```
-
-### Justification
-Resumes are primarily persisted as Active Record rows and stored HTML blobs; the transaction-script model matches that use case. Each method reads or writes a handful of tables, handles notifications, and finishes. Introducing a Builder pattern would add indirection without reducing complexity, whereas the current imperative code keeps template rendering, file management, and repository writes together in one workflow. Using `ModuleRegistry` for lookups (e.g., fetching candidate details when showing a profile) keeps cross-module queries consistent with the rest of the system.
-
----
-
-## 3. Job Posting & Application Module — Transaction Script Aggregator (FW)
-
-### Design Pattern
-`JobApplicationService` (`app/Services/Modules/JobApplicationService.php`) exposes job and application data. As with other modules, `handle()` routes each request type (`jobs`, `job`, `applications`, `application`, `summary`) to an imperative method that directly queries the corresponding Eloquent models. These methods eagerly load relations (employer, recruiter, candidate) and map them into associative arrays. When richer context is required—such as embedding a candidate's resume in an application view—the module relies on `forward('resume-profile', ...)` to invoke another module.
-
-### Implementation & Coding
-```php
-private function showJob(?string $id): array
-{
-    $jobId = $this->requireIntId($id, 'A job identifier is required.');
-    $job = JobPosting::query()->with(['employer', 'recruiter'])->find($jobId);
-    if ($job === null) {
-        throw new InvalidArgumentException('Job posting not found.');
-    }
-
-    $payload = $job->toArray();
-    $employer = $job->employer;
-    if ($employer instanceof Model) {
-        $payload['employer'] = $employer->toArray();
-    }
-    $recruiter = $job->recruiter;
-    if ($recruiter instanceof Model) {
-        $payload['recruiter'] = $recruiter->toArray();
-    }
-
-    $applications = Application::query()
-        ->where('job_posting_id', $jobId)
-        ->with('candidate')
-        ->get();
-
-    $payload['applications'] = $applications->map(static function (Application $application): array {
-        $data = $application->toArray();
-        $candidate = $application->candidate;
-        if ($candidate instanceof Model) {
-            $data['candidate'] = $candidate->toArray();
-        }
-        return $data;
-    })->all();
-    $payload['application_count'] = $applications->count();
-
-    return $this->respond([
-        'job' => $payload,
-    ]);
-}
-```
-
-```php
-private function summarise(): array
-{
-    $totalJobs = JobPosting::query()->count();
-    $activeJobs = JobPosting::query()->whereIn('status', ['active', 'open'])->count();
-    $closedJobs = JobPosting::query()->whereIn('status', ['closed', 'archived'])->count();
-
-    $topCandidates = Application::query()
-        ->selectRaw('candidate_id, COUNT(*) as total_applications')
-        ->whereNotNull('candidate_id')
-        ->groupBy('candidate_id')
-        ->orderByDesc('total_applications')
-        ->take(5)
-        ->get()
-        ->map(function ($row) {
-            $candidateId = (string) $row->candidate_id;
-            $profile = $this->forward('resume-profile', 'profile', $candidateId);
-            return [
-                'candidate_id' => (int) $row->candidate_id,
-                'applications' => (int) $row->total_applications,
-                'profile' => $profile['profile'] ?? null,
-                'resume' => $profile['resume'] ?? null,
-            ];
-        })
-        ->all();
-
-    return $this->respond([
-        'summary' => [
-            'jobs' => [
-                'total' => $totalJobs,
-                'active' => $activeJobs,
-                'closed' => $closedJobs,
-            ],
-            'applications' => [
-                'total' => Application::query()->count(),
-                'recent' => Application::query()->orderByDesc('created_at')->take(5)->get()->map(static fn (Application $application) => $application->toArray())->all(),
-            ],
-            'top_candidates' => $topCandidates,
-        ],
-    ]);
-}
-```
-
-### Justification
-The job module's responsibilities revolve around assembling dashboards and listings. Each endpoint translates to a single set of SQL queries followed by light transformation, which fits the transaction-script approach. Controllers or external clients receive denormalised payloads without needing to coordinate multiple repositories. By pushing cross-cutting lookups through `forward()`, the module stays loosely coupled while still presenting comprehensive views of jobs and applications.
-
----
-
-## 4. Payment & Billing Module — Transaction Script with Cross-Module Enrichment (TC)
-
-### Design Pattern
-`PaymentBillingService` (`app/Services/Modules/PaymentBillingService.php`) implements payment and billing read models using the same pattern. Methods such as `listPayments()`, `showPayment()`, `listBilling()`, and `summarise()` are imperative scripts that filter `Payment` and `Billing` Active Record models based on query parameters, compute aggregates, and return the data in associative arrays. Observer-style event broadcasting is not present; instead, any enrichment (for example, attaching user details to a payment) is performed synchronously via module forwarding.
-
-### Implementation & Coding
-```php
-private function showPayment(?string $id): array
-{
-    $paymentId = $this->requireIntId($id, 'A payment identifier is required.');
-    $payment = Payment::find($paymentId);
-    if ($payment === null) {
-        throw new InvalidArgumentException('Payment record not found.');
-    }
-
-    $data = $payment->toArray();
-    $role = $this->roleForUserType($data['user_type'] ?? null);
-    if ($role !== null && isset($data['user_id']) && is_numeric($data['user_id'])) {
-        $user = $this->forward('user-management', 'user', (string) $data['user_id'], [
-            'role' => $role,
-        ]);
-        $data['user'] = $user['user'] ?? null;
-    }
-
-    return $this->respond([
-        'payment' => $data,
-    ]);
-}
-```
-
-```php
-$statusBreakdown = Payment::query()
-    ->selectRaw('transaction_status, COUNT(*) as count, SUM(amount) as total_amount')
-    ->groupBy('transaction_status')
-    ->get()
-    ->map(static function ($row): array {
-        return [
-            'status' => $row->transaction_status,
-            'count' => (int) $row->count,
-            'total_amount' => (float) $row->total_amount,
-        ];
-    })
-    ->all();
-
-$topUsers = Payment::query()
-    ->selectRaw('user_type, user_id, SUM(amount) as total_amount, COUNT(*) as payments')
-    ->whereNotNull('user_id')
-    ->groupBy('user_type', 'user_id')
-    ->orderByDesc('total_amount')
-    ->take(5)
-    ->get()
-    ->map(function ($row): array {
-        $role = $this->roleForUserType($row->user_type);
-        $userDetails = $role !== null
-            ? $this->forward('user-management', 'user', (string) $row->user_id, ['role' => $role])
-            : null;
-
-        return [
-            'user_id' => (int) $row->user_id,
-            'user_type' => $row->user_type,
-            'total_amount' => (float) $row->total_amount,
-            'payments' => (int) $row->payments,
-            'user' => $userDetails['user'] ?? null,
-        ];
-    })
-    ->all();
-```
-
-### Justification
-Payment analytics in HireMe focus on reporting rather than asynchronous event handling, so the observer pattern would add overhead without concrete benefit. The current design keeps data retrieval linear and predictable: one method runs the queries, shapes the response, and (if necessary) enriches records by calling other modules. This provides a clear surface for dashboards while avoiding the complexity of maintaining observer registries or event buses.
-
----
-
-## 5. Administration & Moderation Module — Transaction Script Dashboard (ZC)
-
-### Design Pattern
-`AdminModerationService` (`app/Services/Modules/AdminModerationService.php`) powers administrative dashboards through three scripts: `overview()`, `metrics()`, and `audit()`. Each script aggregates counts from core tables (`Candidate`, `Employer`, `JobPosting`, `Payment`) and stitches in cross-module data via `forward()` to user, job, or payment services. There is no command bus or discrete command objects; moderation actions are represented as read-only snapshots for administrators.
-
-### Implementation & Coding
-```php
-private function overview(): array
-{
-    $userSnapshot = $this->forward('user-management', 'users', 'all');
-    $jobSnapshot = $this->forward('job-application', 'summary', 'all');
-    $financeSnapshot = $this->forward('payment-billing', 'summary', 'all');
-
-    $pendingVerifications = Candidate::query()->where('verified_status', 'pending')->count();
-    $flaggedJobs = JobPosting::query()->whereIn('status', ['flagged', 'under_review'])->count();
-
-    return $this->respond([
-        'overview' => [
-            'users' => $userSnapshot,
-            'jobs' => $jobSnapshot['summary'] ?? [],
-            'finance' => $financeSnapshot['summary'] ?? [],
-            'pending_verifications' => $pendingVerifications,
-            'flagged_jobs' => $flaggedJobs,
-        ],
-    ]);
-}
-```
-
-```php
-$failedPayments = Payment::query()
-    ->where('transaction_status', 'failed')
-    ->orderByDesc('created_at')
-    ->take(10)
-    ->get()
-    ->map(function (Payment $payment): array {
-        $user = null;
-        if ($payment->user_id !== null) {
-            $role = $this->roleForUserType($payment->user_type);
-            if ($role !== null) {
-                $user = $this->forward('user-management', 'user', (string) $payment->user_id, [
-                    'role' => $role,
-                ]);
+            /** @var PaymentObserver $observer */
+            foreach ($this->observers[$name] as $observer) {
+                $observer->handle($event);
             }
         }
-
-        return [
-            'payment' => $payment->toArray(),
-            'user' => $user['user'] ?? null,
-        ];
-    })
-    ->all();
+    }
 ```
+- `PaymentBillingService` composes a processor via `PaymentProcessor::withDefaultObservers()`, forwards charge requests to `process()`, and enriches responses with user/billing lookups to keep module results cohesive.【F:app/Services/Modules/PaymentBillingService.php†L13-L284】
+- `PaymentProcessor` normalises payloads, persists `Payment` models, determines the event name, and notifies observers registered per event channel or wildcard.【F:app/Services/Payment/PaymentProcessor.php†L37-L149】
+- Observers `InvoiceStatusUpdater`, `SubscriptionStateManager`, and `AccountingNotifier` react independently: updating billing rows, applying or reverting credits/premium badges, and logging to disk, respectively.【F:app/Services/Payment/Observers/InvoiceStatusUpdater.php†L12-L99】【F:app/Services/Payment/Observers/SubscriptionStateManager.php†L15-L154】【F:app/Services/Payment/Observers/AccountingNotifier.php†L11-L50】
 
 ### Justification
-Administrative reporting involves collating many small datasets rather than orchestrating complex write operations. The transaction-script methods encapsulate each report in a single location, making it easy to adjust queries or add additional fields. Because moderation workflows primarily consume data generated elsewhere, introducing a command pattern would not provide meaningful value; the current design keeps the admin module focused on read models while delegating any required mutations back to the appropriate module service.
+Observer decouples payment side effects so that new reactions—such as webhook calls or fraud scoring—can be added without editing the core processor. Existing observers remain focused on their responsibility, and failures in one listener do not block others, improving resilience for billing workflows while keeping `PaymentBillingService` thin and testable.【F:app/Services/Payment/PaymentProcessor.php†L37-L149】【F:app/Services/Modules/PaymentBillingService.php†L13-L284】
 
 ---
 
-## Shared Infrastructure — ModuleRegistry as a Service Locator
+## 5. Administration & Moderation Module — Command Pattern (ZC)
 
-Across all modules, `ModuleRegistry` (`app/Services/Modules/ModuleRegistry.php`) acts as a central registry that wires services together. During bootstrapping, `ModuleRegistry::boot()` instantiates each module service, registers aliases, and injects the registry into services implementing `RegistryAwareInterface`. Subsequent calls to `forward()` leverage this registry to synchronously invoke other modules using a synthetic `Request` object built by `makeRequest()`.
+### Design Pattern
+Administrative operations (overview dashboards, metrics, audits, approving jobs, suspending or reinstating users) are modelled as discrete command objects. The Command pattern encapsulates each request—including authorisation and logging hooks—allowing the `AdminModerationService` to dispatch them via a `ModerationCommandBus` that standardises execution and reporting.【F:app/Services/Modules/AdminModerationService.php†L33-L209】【F:app/Services/Admin/Moderation/ModerationCommandBus.php†L9-L102】
 
-This arrangement resembles the **Service Locator** pattern: modules look up one another by name at runtime instead of depending on compile-time interfaces. While service locators are often debated, in the current codebase they provide a simple way to share read-model data between modules without introducing HTTP calls or deep coupling.
+### Implementation & Coding
+```
++--------------------------------+
+|   AdminModerationService       |
+|   handle()                     |
++-------------+------------------+
+              | dispatches
+              v
++-------------------------------+
+|     ModerationCommandBus      |
+|  authorize -> log -> execute  |
++-------------+-----------------+
+              |
+              v
+      +---------------------+
+      | ModerationCommand   |
+      +---------------------+
+              |
+      ------------------------------
+      |            |               |
++-------------+ +-------------+ +------------------+
+|OverviewCommand|MetricsCommand|AuditLogCommand    |
++-------------+ +-------------+ +------------------+
+      |            |               |
+      ------------------------------
+      |            |
++---------------------+   +-------------------------+
+|SuspendUserCommand   |   |ReinstateUserCommand    |
++---------------------+   +-------------------------+
+          |
++---------------------+
+|ApproveJobCommand    |
++---------------------+
+```
+```php
+    public function dispatch(ModerationCommand $command): ModerationCommandResult
+    {
+        $this->authorizer->authorize($command);
+
+        $this->logger->info(sprintf('Dispatching moderation command "%s".', $command->name()));
+
+        try {
+            $result = $command->execute();
+            $this->logger->info(
+                sprintf('Command "%s" completed with status "%s".', $command->name(), $result->status()),
+                ['command' => $command->name(), 'status' => $result->status()]
+            );
+
+            return $result;
+        } catch (Throwable $exception) {
+            $this->logger->error(
+                sprintf('Command "%s" failed: %s', $command->name(), $exception->getMessage()),
+                ['command' => $command->name(), 'exception' => $exception::class]
+            );
+
+            throw $exception;
+        }
+    }
+```
+- `AdminModerationService` converts incoming requests into command instances (overview, metrics, audit, approve, suspend, reinstate) and hands them to the bus, receiving either structured data or a `ModerationCommandResult` for action responses.【F:app/Services/Modules/AdminModerationService.php†L33-L209】
+- `ModerationCommandBus` enforces authorisation via `AdminRequestAuthorizer`, logs lifecycle events with `ErrorLogModerationLogger`, and supports queueing/retrying before executing the command’s `execute()` method.【F:app/Services/Admin/Moderation/ModerationCommandBus.php†L9-L102】【F:app/Services/Admin/Moderation/AdminRequestAuthorizer.php†L8-L33】【F:app/Services/Admin/Moderation/ErrorLogModerationLogger.php†L5-L18】
+- Concrete commands encapsulate their logic: dashboards aggregate module data, metrics compute counts, audit lists flagged entities, while suspend/reinstate commands persist suspension state via `ModerationSuspensionStore` and `UserLookup` helpers.【F:app/Services/Admin/Moderation/Commands/OverviewCommand.php†L13-L46】【F:app/Services/Admin/Moderation/Commands/MetricsCommand.php†L9-L40】【F:app/Services/Admin/Moderation/Commands/AuditLogCommand.php†L13-L83】【F:app/Services/Admin/Moderation/Commands/SuspendUserCommand.php†L13-L56】【F:app/Services/Admin/Moderation/Commands/ReinstateUserCommand.php†L13-L48】【F:app/Services/Admin/Moderation/ModerationSuspensionStore.php†L12-L88】【F:app/Services/Admin/Moderation/UserLookup.php†L9-L24】
+
+### Justification
+Command isolates moderation actions so policy-heavy logic (authorisation, auditing, suspension rules) lives alongside the action that needs it. New administrative capabilities become new command classes, and the bus guarantees consistent logging and permission checks without duplicating code across handlers.【F:app/Services/Admin/Moderation/ModerationCommandBus.php†L9-L102】【F:app/Services/Admin/Moderation/Commands/SuspendUserCommand.php†L13-L56】 The pattern also streamlines testing—each command can be exercised independently—and supports future enhancements like background execution by reusing the queueing facilities already present in the bus.【F:app/Services/Admin/Moderation/ModerationCommandBus.php†L44-L102】
