@@ -11,6 +11,7 @@ use App\Services\Admin\Moderation\ModerationCommand;
 use App\Services\Admin\Moderation\ModerationCommandResult;
 use App\Services\Admin\Moderation\ModerationSuspensionStore;
 use App\Services\Modules\ModuleRegistry;
+use Throwable;
 
 final class AuditLogCommand implements ModerationCommand
 {
@@ -33,7 +34,7 @@ final class AuditLogCommand implements ModerationCommand
             ->take(10)
             ->get()
             ->map(function (Candidate $candidate): array {
-                $user = $this->registry->call('user-management', 'user', (string) $candidate->candidate_id, [
+                $user = $this->safeCall('user-management', 'user', (string) $candidate->candidate_id, [
                     'role' => 'candidates',
                 ]);
 
@@ -52,7 +53,7 @@ final class AuditLogCommand implements ModerationCommand
             ->map(function (JobPosting $job): array {
                 $employer = null;
                 if ($job->company_id !== null) {
-                    $employer = $this->registry->call('user-management', 'user', (string) $job->company_id, [
+                    $employer = $this->safeCall('user-management', 'user', (string) $job->company_id, [
                         'role' => 'employers',
                     ]);
                 }
@@ -74,7 +75,7 @@ final class AuditLogCommand implements ModerationCommand
                 if ($payment->user_id !== null) {
                     $role = $this->roleForUserType($payment->user_type);
                     if ($role !== null) {
-                        $user = $this->registry->call('user-management', 'user', (string) $payment->user_id, [
+                        $user = $this->safeCall('user-management', 'user', (string) $payment->user_id, [
                             'role' => $role,
                         ]);
                     }
@@ -115,5 +116,25 @@ final class AuditLogCommand implements ModerationCommand
             'admin', 'admins' => 'admins',
             default => null,
         };
+    }
+
+    /**
+     * @param array<string, mixed> $query
+     * @return array<string, mixed>|null
+     */
+    private function safeCall(string $module, string $type, ?string $id = null, array $query = []): ?array
+    {
+        try {
+            return $this->registry->call($module, $type, $id, $query);
+        } catch (Throwable $exception) {
+            error_log(sprintf(
+                '[Moderation][WARN] %s:%s lookup failed: %s',
+                $module,
+                $type,
+                $exception->getMessage()
+            ));
+
+            return null;
+        }
     }
 }
