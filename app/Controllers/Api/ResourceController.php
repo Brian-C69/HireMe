@@ -16,10 +16,18 @@ use App\Models\Recruiter;
 use App\Models\Resume;
 use App\Models\ResumeUnlock;
 use App\Models\StripePayment;
+use App\Services\Modules\ModuleRegistry;
 use Illuminate\Database\Eloquent\Model;
 
 class ResourceController extends ApiController
 {
+    private ?ModuleRegistry $moduleRegistry = null;
+
+    public function setModuleRegistry(ModuleRegistry $registry): void
+    {
+        $this->moduleRegistry = $registry;
+    }
+
     /**
      * Map of API resource names to their backing Eloquent models.
      *
@@ -84,6 +92,11 @@ class ResourceController extends ApiController
 
         $modelClass = $this->resolveModel($resource);
         if ($modelClass === null) {
+            $moduleResponse = $this->forwardToModule($request, $resource, (string) $id);
+            if ($moduleResponse !== null) {
+                return $moduleResponse;
+            }
+
             return $this->error('Unknown resource.', 404);
         }
 
@@ -208,5 +221,26 @@ class ResourceController extends ApiController
         }
 
         return $input;
+    }
+
+    private function forwardToModule(Request $request, string $module, string $type): ?Response
+    {
+        $registry = $this->moduleRegistry();
+        if ($registry->get($module) === null) {
+            return null;
+        }
+
+        $gateway = new ModuleGatewayController($registry);
+
+        return $gateway->handle($request, $module, $type, null);
+    }
+
+    private function moduleRegistry(): ModuleRegistry
+    {
+        if ($this->moduleRegistry === null) {
+            $this->moduleRegistry = ModuleRegistry::boot();
+        }
+
+        return $this->moduleRegistry;
     }
 }
