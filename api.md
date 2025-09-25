@@ -43,6 +43,7 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 
 **Response Payload**
 
+
 | Field | Type | Mandatory/Optional | Description | Format |
 |-------|------|--------------------|-------------|--------|
 | `module` | String | Mandatory | Module emitter identifier. | `user-management` |
@@ -50,6 +51,7 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 | `users` | Array/Object | Mandatory | Array of user objects (single role) or role-keyed map (`role=all`). | `[ { "id": 5, "email": "talent@example.com" } ]` |
 | `count` | Integer | Optional | Single-role total count. Omitted when `role=all`. | `42` |
 | `counts` | Object | Optional | Per-role and total counts when `role=all`. | `{ "candidates": 30, "employers": 12, "total": 42 }` |
+
 
 #### 2.1.2 `showUser`
 * **Function Description:**
@@ -68,6 +70,7 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 
 **Response Payload**
 
+
 | Field | Type | Mandatory/Optional | Description | Format |
 |-------|------|--------------------|-------------|--------|
 | `module` | String | Mandatory | Module emitter identifier. | `user-management` |
@@ -76,6 +79,7 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 | `includes` | Array | Optional | Echo of processed include keys. | `["profile","resume"]` |
 | `related` | Object | Optional | Keyed include payloads (profile, resume, applications, etc.). | `{ "profile": { ... }, "applications_count": 3 }` |
 | `message` | String | Optional | Error or validation message on failure. | `"User not found"` |
+
 
 #### 2.1.3 `authenticate`
 * **Function Description:**
@@ -101,6 +105,7 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 | `role` | String | Optional | Role slug for the authenticated user. | `recruiter` |
 | `user` | Object | Optional | Sanitized user resource when authentication succeeds. | `{ "id": 9, "email": "recruiter@example.com" }` |
 | `message` | String | Optional | Failure reason returned on authentication errors. | `"Invalid credentials provided."` |
+
 
 ---
 
@@ -130,6 +135,7 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 
 **Representative Response Fields**
 
+
 | Field | Type | Mandatory/Optional | Description | Format |
 |-------|------|--------------------|-------------|--------|
 | `module` | String | Mandatory | Module emitter identifier. | `resume-profile` |
@@ -139,6 +145,7 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 | `resume` | Object/Null | Optional | Latest resume with rendered artifacts. | `{ "id": 77, "rendered_format": "pdf" }` |
 | `user` | Object/Null | Optional | User snapshot fetched from User Management. | `{ "id": 15, "email": "talent@example.com" }` |
 | `count` | Integer | Optional | Record count accompanying list endpoints. | `12` |
+
 
 ---
 
@@ -172,6 +179,7 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 
 **Response Highlights**
 
+
 | Field | Type | Mandatory/Optional | Description | Format |
 |-------|------|--------------------|-------------|--------|
 | `module` | String | Mandatory | Module emitter identifier. | `job-application` |
@@ -179,6 +187,7 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 | `applications` | Array | Optional | Application records with embedded candidate/job info. | `[ { "id": 501, "candidate_id": 55 } ]` |
 | `count` | Integer | Optional | Record count attached to listings. | `24` |
 | `summary` | Object | Optional | Aggregated metrics for dashboards. | `{ "active_jobs": 12, "applications_today": 18 }` |
+
 
 ---
 
@@ -221,6 +230,7 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 | `summary` | Object | Optional | Aggregated finance metrics. | `{ "total_revenue": 1299.50, "top_payers": [ ... ] }` |
 | `event` | String | Optional | Event label raised by `charge()`. | `payment.processed` |
 
+
 ---
 
 ## 6. Administration & Moderation Module
@@ -259,11 +269,13 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 
 **Response Highlights**
 
+
 | Field | Type | Mandatory/Optional | Description | Format |
 |-------|------|--------------------|-------------|--------|
 | `module` | String | Mandatory | Module emitter identifier. | `admin-moderation` |
 | `result` | Object | Optional | Outcome details for write commands. | `{ "status": "approved", "job_id": 88 }` |
 | `overview` / `metrics` / `audit` | Object | Optional | Command-specific datasets returned for reads. | `{ "pending_jobs": 5, "suspensions": 2 }` |
+
 
 All administrative endpoints assert guardian permissions (`assertRead`/`assertWrite`) and emit arbiter events prefixed with `admin.moderation.` for downstream enforcement.【F:app/Services/Modules/AdminModerationService.php†L85-L112】
 
