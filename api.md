@@ -3,20 +3,13 @@
 
 All modules are exposed through the Laravel gateway at `http://localhost/HireMe/public/api/{module}/{type}/{id?}` using RESTful JSON payloads. Each response automatically includes a `module` field identifying the producer service. Optional query parameters are supplied via query string for GET requests and JSON bodies for non-GET requests.
 
-### Example API Request
+### Administration & Moderation Module Quick Calls
 
-```bash
-curl --request POST \
-     --url http://localhost/HireMe/public/api/user-management/authenticate \
-     --header 'Content-Type: application/json' \
-     --data '{
-       "email": "pat@example.com",
-       "password": "My$ecret",
-       "role": "recruiters"
-     }'
-```
+- `GET http://localhost/HireMe/api/admin-moderation/overview` — Moderation overview dashboard data.
+- `GET http://localhost/HireMe/api/admin-moderation/metrics` — Moderation metrics feed.
+- `GET http://localhost/HireMe/api/admin-moderation/audit` — Moderation audit log feed.
 
-This sample shows how to authenticate a recruiter through the Laravel gateway. Replace the payload values with real user credentials and adjust the endpoint to interact with other modules.
+Use these endpoints to explore administrative insights without additional headers or command-line tooling. Adjust the path segments to interact with other modules as needed.
 
 ---
 
@@ -675,68 +668,87 @@ private function charge(Request $request): array
 
 ## 5. Administration & Moderation Module
 
-### 5.1 Job Approval Command Dispatch
+### 5.1 Moderation Overview Dashboard Feed
 
-Webservice Mechanism Service Exposure: Job Approval Command Dispatch
+Webservice Mechanism Service Exposure: Moderation Overview Dashboard Feed
 ##### Protocol: RESTFUL
-##### Function Description: 1. Validates moderator authority and approves a pending job 2. Dispatches moderation events through the arbiter for audit trails
+##### Function Description: 1. Aggregates cross-module snapshots for users, jobs, finance, and suspensions 2. Surfaces dashboard-friendly counts for pending verifications, flagged postings, and failed payments
 ##### Source Module: Administration & Moderation Module
-##### Target Module: Job Posting & Application, User Management & Authentication
-##### URL: http://localhost/HireMe/public/api/admin-moderation/approve-job/{jobId}
-##### Function Name: makeApproveJobCommand() via handle('approve-job')
+##### Target Module: User Management & Authentication, Job Posting & Application, Payment & Billing
+##### URL: http://localhost/HireMe/public/api/admin-moderation/overview
+##### Function Name: handle('overview')
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
 |------------|-----------|----------------------|-------------|--------|
-| jobId | path integer | mandatory | Identifier of the job being approved. | 88 |
-| X-Admin-Id | header string | optional | Moderator identifier used for auditing. | 12 |
-| moderator_id | integer | optional | Moderator identifier fallback when header absent. | 12 |
+| (none) | — | — | This endpoint requires no query string or body parameters. | — |
 
 Web Services Response Parameter (consume)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
 |------------|-----------|----------------------|-------------|--------|
 | module | string | mandatory | Service emitter identifier. | admin-moderation |
-| result.command | string | mandatory | Command key executed by the moderation bus. | approve-job |
-| result.status | string | mandatory | Outcome status from the command. | approved |
-| result.payload.job_id | integer | optional | Echo of the approved job identifier. | 88 |
+| overview | object | mandatory | Consolidated moderation dashboard payload. | {"users":[],"pending_verifications":3} |
+| overview.users | array | optional | Normalised user snapshots forwarded from User Management. | [{"id":12,"role":"candidate"}] |
+| overview.user_counts | object | optional | Aggregated counts per user type. | {"candidates":120,"employers":32} |
+| overview.jobs | array\|object | optional | Job summary metrics sourced from Job Application. | {"total":85,"under_review":5} |
+| overview.finance | array\|object | optional | Finance summary derived from Payment & Billing. | {"revenue":10999.50} |
+| overview.pending_verifications | integer | mandatory | Count of candidates awaiting verification. | 7 |
+| overview.flagged_jobs | integer | mandatory | Number of job postings flagged or under review. | 4 |
+| overview.failed_payments | integer | mandatory | Number of failed payments detected. | 2 |
+| overview.active_suspensions | integer | mandatory | Active suspension total sourced from the moderation store. | 6 |
+| overview.errors | object | optional | Map of snapshot failures keyed by upstream module. | {"payment-billing":"Failed to fetch payment-billing snapshot."} |
 
-### 5.2 User Suspension Lifecycle Management
+### 5.2 Moderation Metrics Feed
 
-Webservice Mechanism Service Exposure: User Suspension Lifecycle Management
+Webservice Mechanism Service Exposure: Moderation Metrics Feed
 ##### Protocol: RESTFUL
-##### Function Description: 1. Suspends a user with optional expiry and moderation reason 2. Logs guardian audits and emits moderation events for enforcement
+##### Function Description: 1. Computes real-time counts for core moderation KPIs 2. Tracks suspended accounts, active jobs, and failed transactions
 ##### Source Module: Administration & Moderation Module
-##### Target Module: User Management & Authentication, Resume & Profile Management, Payment & Billing
-##### URL: http://localhost/HireMe/public/api/admin-moderation/suspend-user
-##### Function Name: makeSuspendUserCommand() via handle('suspend-user')
+##### Target Module: User Management & Authentication, Job Posting & Application, Payment & Billing
+##### URL: http://localhost/HireMe/public/api/admin-moderation/metrics
+##### Function Name: handle('metrics')
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
 |------------|-----------|----------------------|-------------|--------|
-| role | string | mandatory | Role slug for the target account. | employer |
-| user_id | integer | mandatory | Identifier of the account being suspended. | 35 |
-| until | string | optional | ISO-8601 timestamp specifying suspension expiry. | 2024-06-30T23:59:59Z |
-| reason | string | optional | Moderator-provided suspension note. | Fraudulent activity |
-| X-Admin-Moderation | header string | mandatory* | Privilege gate for moderation commands; value must normalize to `allow`, `true`, `yes`, `1`, or `allowed`. Provide this or the alternative `X-Admin-Token`. | allow |
-| X-Admin-Id | header string | optional | Acting moderator identifier for audit trails. | 12 |
-
-*At least one privilege header (`X-Admin-Moderation` or `X-Admin-Token`) must accompany the request. The gateway registers this route with `$router->any(...)`, so you may call it via GET with query parameters or POST/PUT with a JSON body—just remember to include the authorization header alongside the required `role` and `user_id` fields.*
-
-```bash
-curl "http://localhost/HireMe/public/api/admin-moderation/suspend-user?user_id=35&role=employer" \
-  -H "X-Admin-Moderation: allow" \
-  -H "X-Admin-Id: 12"
-```
+| (none) | — | — | No query parameters or headers are required. | — |
 
 Web Services Response Parameter (consume)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
 |------------|-----------|----------------------|-------------|--------|
 | module | string | mandatory | Service emitter identifier. | admin-moderation |
-| result.command | string | mandatory | Command key executed by the moderation bus. | suspend-user |
-| result.status | string | mandatory | Outcome status from the command execution. | success |
-| result.payload.role | string | optional | Role that was suspended. | employer |
-| result.payload.user_id | integer | optional | Identifier of the suspended account. | 35 |
-| result.payload.until | string | optional | Suspension expiry timestamp when provided. | 2024-06-30T23:59:59+00:00 |
+| metrics | object | mandatory | Structured KPI payload for dashboards. | {"users":{"candidates":120}} |
+| metrics.users.candidates | integer | mandatory | Total registered candidates. | 120 |
+| metrics.users.employers | integer | mandatory | Total registered employers. | 34 |
+| metrics.jobs.total | integer | mandatory | Total job postings tracked. | 215 |
+| metrics.jobs.active | integer | mandatory | Count of active or open job postings. | 167 |
+| metrics.payments.failed | integer | mandatory | Number of failed payments detected. | 9 |
+| metrics.moderation.active_suspensions | integer | mandatory | Total active suspensions recorded. | 12 |
+
+### 5.3 Moderation Audit Log Feed
+
+Webservice Mechanism Service Exposure: Moderation Audit Log Feed
+##### Protocol: RESTFUL
+##### Function Description: 1. Streams the latest flagged entities and failed transactions for moderator review 2. Enriches listings with related user lookups to accelerate triage
+##### Source Module: Administration & Moderation Module
+##### Target Module: User Management & Authentication, Job Posting & Application, Payment & Billing
+##### URL: http://localhost/HireMe/public/api/admin-moderation/audit
+##### Function Name: handle('audit')
+
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| (none) | — | — | No headers or filters are needed to consume the audit stream. | — |
+
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | admin-moderation |
+| audit | object | mandatory | Container for the moderated entity feeds. | {"candidates":[],"jobs":[],"payments":[]} |
+| audit.candidates | array | mandatory | Pending candidate verifications with embedded user data. | [{"candidate":{...},"user":{...}}] |
+| audit.jobs | array | mandatory | Flagged or under-review jobs with employer context. | [{"job":{...},"employer":{...}}] |
+| audit.payments | array | mandatory | Failed payment events with related account lookups. | [{"payment":{...},"user":{...}}] |
+| audit.suspensions | array | optional | Full suspension ledger returned by the moderation store. | [{"role":"employer","user_id":35}] |
 
 #### Supporting Service Code
 
