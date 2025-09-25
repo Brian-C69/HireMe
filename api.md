@@ -212,12 +212,12 @@ Web Services Response Parameter (consume)
 ### 2.2 Profile Dossier with Latest Resume & User Snapshot
 
 Webservice Mechanism Service Exposure: Profile Dossier with Latest Resume & User Snapshot
-Protocol: RESTFUL
-Function Description: 1. Aggregates candidate profile data with latest resume rendering 2. Forwards to User Management to attach the owning user account snapshot
-Source Module: Resume & Profile Management Module
-Target Module: User Management & Authentication, Job Posting & Application
-URL: http://localhost/HireMe/public/api/resume-profile/profile/{candidateId}
-Function Name: showProfile()
+##### Protocol: RESTFUL
+##### Function Description: 1. Aggregates candidate profile data with latest resume rendering 2. Forwards to User Management to attach the owning user account snapshot
+##### Source Module: Resume & Profile Management Module
+##### Target Module: User Management & Authentication, Job Posting & Application
+##### URL: http://localhost/HireMe/public/api/resume-profile/profile/{candidateId}
+##### Function Name: showProfile()
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
