@@ -3,265 +3,301 @@
 ## 1. User Management & Authentication Module
 
 ### 1.1 Potential Threat/Attack
-- **Threat 1: Brute Force Login Attack**  
-  Automated scripts may attempt to guess user credentials by repeatedly submitting login requests.
-- **Threat 2: Password Reset Token Abuse**  
-  Attackers may brute-force or reuse leaked password reset tokens to take over accounts.
 
-### 1.2 Secure Coding Practice
+- **Threat 1: Brute Force Login Attack** – Automated scripts repeatedly submit credentials to guess a valid email/password pair.
+- **Threat 2: Password Reset Token Abuse** – Attackers try to reuse or brute-force password reset tokens to take over accounts.
 
-**Solution for Threat 1: Rate Limiting & Account Lockout**  
-Implement login throttling, exponential backoff, and temporary account lockout after successive failed attempts.
+### 1.2 Secure Coding Practices Implemented in HireMe
+
+**Solution for Threat 1: Login throttling, lockout, and CSRF checks**
+
+The production login flow relies on `App\Services\AttemptService` to track failures per email/IP pair and to block requests once the configured threshold is exceeded. The controller consults this service before authenticating credentials and always enforces CSRF protection.
 
 ```php
-// app/Http/Controllers/Auth/LoginController.php
-public function login(Request $request)
+// app/Services/AttemptService.php
+public function isLockedOut(PDO $pdo, string $email, string $ip): bool
 {
-    $credentials = $request->only('email', 'password');
-
-    if (RateLimiter::tooManyAttempts($this->throttleKey($request), 5)) {
-        throw ValidationException::withMessages([
-            'email' => ['Too many login attempts. Please try again later.'],
-        ]);
-    }
-
-    if (!Auth::attempt($credentials)) {
-        RateLimiter::hit($this->throttleKey($request), now()->addMinutes(15));
-        throw ValidationException::withMessages([
-            'email' => ['The provided credentials are incorrect.'],
-        ]);
-    }
-
-    RateLimiter::clear($this->throttleKey($request));
-    return redirect()->intended('/dashboard');
+    $st = $pdo->prepare("SELECT attempts,last_attempt_at FROM login_attempts WHERE email=:e AND ip_address=:i LIMIT 1");
+    $st->execute([':e' => $email, ':i' => $ip]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) return false;
+    if ((int)$row['attempts'] < self::MAX_ATTEMPTS) return false;
+    return (time() - strtotime((string)$row['last_attempt_at'])) < self::LOCK_MINUTES * 60;
 }
 ```
 
-**Solution for Threat 2: Signed, Single-Use Tokens**  
-Use signed tokens with short expiration and mark tokens as consumed upon use.
+```php
+// app/Controllers/AuthController.php (excerpt from doLogin)
+if (!$this->verifyCsrf($_POST['csrf'] ?? null)) {
+    $this->flash('danger', 'Invalid session.');
+    $this->redirect('/login');
+}
+
+if ($attemptSvc->isLockedOut($pdo, $email, $ip)) {
+    $this->flash('danger', 'Too many failed attempts. Please reset your password or try again later.');
+    $this->redirect('/login');
+}
+
+if (!$found || !password_verify($pass, (string)$found['user']['password_hash'])) {
+    $attemptSvc->recordFailure($pdo, $email, $ip);
+    ...
+}
+```
+
+**Solution for Threat 2: Single-use, hashed reset tokens with expiry**
+
+Password reset links are generated with 32-byte random tokens. Only SHA-256 hashes of the tokens are stored, previous tokens are invalidated, and tokens are marked as used inside a transaction when the password changes.
 
 ```php
-// app/Services/PasswordResetService.php
-public function createResetToken(User $user): string
-{
-    $token = Str::random(64);
-    DB::table('password_resets')->updateOrInsert(
-        ['email' => $user->email],
-        [
-            'token' => Hash::make($token),
-            'created_at' => now(),
-            'used' => false,
-        ]
-    );
+// app/Controllers/AuthController.php (sendReset)
+$token = bin2hex(random_bytes(32));
+$hash = hash('sha256', $token);
+$expires = date('Y-m-d H:i:s', time() + 60 * 60);
+$pdo->prepare("DELETE FROM password_resets WHERE email=:e OR expires_at < NOW() OR used_at IS NOT NULL")
+    ->execute([':e' => $email]);
+$pdo->prepare("INSERT INTO password_resets (email,user_type,token_hash,expires_at) VALUES (:e,:t,:h,:x)")
+    ->execute([':e' => $email, ':t' => $found['user']['role'], ':h' => $hash, ':x' => $expires]);
+```
 
-    return Crypt::encryptString($user->email.'|'.$token.'|'.now()->addMinutes(30));
-}
+```php
+// app/Controllers/AuthController.php (processReset)
+$st = $pdo->prepare("SELECT email,user_type,expires_at,used_at FROM password_resets WHERE token_hash=:h LIMIT 1");
+$st->execute([':h' => $hash]);
+...
+$provider->updatePassword($pdo, $email, $newHash);
+$pdo->prepare("UPDATE password_resets SET used_at=NOW() WHERE token_hash=:h")->execute([':h' => $hash]);
+$pdo->prepare("DELETE FROM password_resets WHERE email=:e AND used_at IS NULL")->execute([':e' => $email]);
 
-public function resetPassword(string $encryptedToken, string $password): void
-{
-    [$email, $token, $expires] = explode('|', Crypt::decryptString($encryptedToken));
-    abort_if(now()->greaterThan($expires), 410, 'Token expired.');
-
-    $record = DB::table('password_resets')->where('email', $email)->first();
-    abort_unless($record && !$record->used && Hash::check($token, $record->token), 403);
-
-    DB::transaction(function () use ($email, $password) {
-        User::where('email', $email)->update(['password' => Hash::make($password)]);
-        DB::table('password_resets')->where('email', $email)->update([
-            'used' => true,
-            'used_at' => now(),
-        ]);
-    });
-}
 ```
 
 ## 2. Resume & Profile Management Module
 
 ### 2.1 Potential Threat/Attack
-- **Threat 1: File Upload Vulnerability**  
-  Malicious users may upload executable files disguised as resumes or profile pictures.
-- **Threat 2: Unauthorized Profile Access**  
-  Attackers might attempt to view other users' profiles by tampering with identifiers.
 
-### 2.2 Secure Coding Practice
+- **Threat 1: File Upload Vulnerability** – Uploading executable or overly large files as profile photos, resumes, or verification documents.
+- **Threat 2: Unauthorized Profile Access** – Manipulating identifiers to read or modify another user’s profile data.
 
-**Solution for Threat 1: File Type Validation & Sanitized Storage**
+### 2.2 Secure Coding Practices Implemented in HireMe
+
+**Solution for Threat 1: MIME/extension validation, size limits, and safe storage**
+
+`CandidateController` performs MIME detection via `mime_content_type`, restricts extensions, enforces size caps, randomises filenames, and stores uploads under `/public/assets/uploads/...` with role-specific prefixes.
 
 ```php
-// app/Http/Controllers/ProfileController.php
-public function uploadResume(Request $request)
-{
-    $request->validate([
-        'resume' => 'required|file|mimes:pdf,doc,docx|max:2048',
-    ]);
-
-    $file = $request->file('resume');
-    $storedName = (string) Str::uuid().'.'.$file->getClientOriginalExtension();
-
-    Storage::disk('resumes')->putFileAs('', $file, $storedName);
+// app/Controllers/CandidateController.php (photo upload excerpt)
+$okTypes = ['image/jpeg' => 'jpg', 'image/png' => 'png'];
+$mime = mime_content_type($up['tmp_name']) ?: '';
+if (!isset($okTypes[$mime])) {
+    $errors['profile_picture'] = 'Only JPG or PNG allowed.';
+} elseif ($up['size'] > 2 * 1024 * 1024) {
+    $errors['profile_picture'] = 'Max 2MB.';
+} else {
+    $ext = $okTypes[$mime];
+    $name = 'cand_' . $uid . '_' . time() . '.' . $ext;
+    $dest = $profilesDir . '/' . $name;
+    if (!move_uploaded_file($up['tmp_name'], $dest)) {
+        $errors['profile_picture'] = 'Upload failed.';
+    } else {
+        $profileUrl = '/assets/uploads/profiles/' . $name;
+    }
 }
 ```
 
-- Check MIME type and extension.  
-- Limit file size (e.g., 2MB).  
-- Store files outside the public web root (use private disk in Laravel).  
-- Generate random filenames.
+The same controller applies similar checks to resume uploads (PDF/DOC/DOCX, 5 MB limit) and candidate verification documents, rejecting unexpected MIME types and handling failures gracefully.
 
-**Solution for Threat 2: Authorization Policies**
+**Solution for Threat 2: Role checks and owner verification before data access**
+
+All profile update endpoints require the caller to be signed in as a `Candidate`. The controller fetches the profile by the session user ID and aborts if no match exists, preventing direct-object-reference attacks.
 
 ```php
-// app/Policies/ProfilePolicy.php
-public function view(User $user, Profile $profile): bool
-{
-    return $user->id === $profile->user_id || $user->hasRole('admin');
-}
-
-// controller
-public function show(Profile $profile)
-{
-    $this->authorize('view', $profile);
-    return view('profiles.show', compact('profile'));
+// app/Controllers/CandidateController.php (account update)
+Auth::requireRole('Candidate');
+$pdo = \App\Core\DB::conn();
+$uid = (int)($_SESSION['user']['id'] ?? 0);
+$st  = $pdo->prepare("SELECT * FROM candidates WHERE candidate_id = :id LIMIT 1");
+$st->execute([':id' => $uid]);
+$candidate = $st->fetch();
+if (!$candidate) {
+    $this->flash('danger', 'Profile not found.');
+    $this->redirect('/account');
 }
 ```
 
 ## 3. Job Posting & Application Module
 
 ### 3.1 Potential Threat/Attack
-- **Threat 1: Cross-Site Scripting (XSS)**  
-  Attackers may inject malicious scripts into job descriptions or application messages.
-- **Threat 2: Access to Sensitive Data**  
-  Unauthorized access to application data or job analytics may expose personal information.
 
-### 3.2 Secure Coding Practice
+- **Threat 1: Cross-Site Scripting (XSS)** – Malicious markup submitted via job descriptions, candidate summaries, or messaging.
+- **Threat 2: Access to Sensitive Data** – Employers or recruiters attempting to modify or read jobs that do not belong to them.
 
-**Solution for Threat 1: Output Encoding & HTML Sanitization**
+### 3.2 Secure Coding Practices Implemented in HireMe
+
+**Solution for Threat 1: Consistent output encoding in views**
+
+Server-rendered templates escape untrusted fields with `htmlspecialchars`, preventing injected HTML/JavaScript from executing in browsers.
 
 ```php
-// resources/views/jobs/show.blade.php
-<h1>{{ $job->title }}</h1>
-<p>{!! Purifier::clean($job->description, ['HTML.Allowed' => 'p,ul,ol,li,b,strong,i,em,a[href]']) !!}</p>
+// app/Views/jobs/mine.php (excerpt)
+<?php foreach ($jobs as $j): ?>
+    <?php $title = htmlspecialchars($j['job_title'] ?? ''); ?>
+    <?php $company = htmlspecialchars($j['company_name'] ?? ''); ?>
+    <td><?= htmlspecialchars($posted) ?></td>
+    <td><span class="<?= $badge($status) ?>"><?= htmlspecialchars($status) ?></span></td>
+<?php endforeach; ?>
 ```
 
-- Store raw input but sanitize/encode before rendering.  
-- Use a library like HTMLPurifier to allow only safe tags/attributes.  
-- Enforce Content Security Policy (CSP) headers.
+Similar escaping patterns exist across candidate, resume, and admin views to neutralise user-supplied content before rendering.
 
-**Solution for Threat 2: Scoped Queries & Data Masking**
+**Solution for Threat 2: Ownership checks on every mutating action**
+
+Before editing, updating status, or deleting a job, the controller ensures the authenticated employer or recruiter owns the record.
 
 ```php
-// app/Repositories/ApplicationRepository.php
-public function getApplicationsForEmployer(User $employer)
+// app/Controllers/JobController.php
+private function ownJob(PDO $pdo, int $jobId): ?array
 {
-    return Application::query()
-        ->whereHas('job', fn ($q) => $q->where('employer_id', $employer->id))
-        ->with(['applicant:id,name,email'])
-        ->select(['id', 'job_id', 'applicant_id', 'status'])
-        ->paginate();
+    $st = $pdo->prepare("SELECT * FROM job_postings WHERE job_posting_id=:id LIMIT 1");
+    $st->execute([':id' => $jobId]);
+    $job = $st->fetch();
+    if (!$job) return null;
+
+    $role = $_SESSION['user']['role'] ?? '';
+    $uid  = (int)($_SESSION['user']['id'] ?? 0);
+    if ($role === 'Employer'  && (int)$job['company_id'] === $uid) return $job;
+    if ($role === 'Recruiter' && (int)($job['recruiter_id'] ?? 0) === $uid) return $job;
+    return null;
 }
 ```
 
-- Restrict queries to the authenticated employer.  
-- Avoid selecting sensitive columns unless necessary.  
-- Apply data masking or redaction for PII when exporting.
+All state-changing actions call `Auth::requireRole(['Employer','Recruiter'])` and halt when `ownJob` returns `null`.
+
 
 ## 4. Payment & Billing Module
 
 ### 4.1 Potential Threat/Attack
-- **Threat 1: Fake Payment Confirmation**  
-  Attackers may forge payment callbacks to unlock premium features without paying.
-- **Threat 2: Cross-Site Request Forgery (CSRF)**  
-  Victims might unknowingly trigger payment-related actions via crafted links or forms.
 
-### 4.2 Secure Coding Practice
+- **Threat 1: Fake Payment Confirmation** – Forged callbacks to unlock credits or premium features without real Stripe payments.
+- **Threat 2: Cross-Site Request Forgery (CSRF)** – Victims tricked into submitting payment or credit-purchase forms.
 
-**Solution for Threat 1: Signed Webhook Verification**
+### 4.2 Secure Coding Practices Implemented in HireMe
+
+**Solution for Threat 1: Stripe signature verification and atomic fulfilment**
+
+Incoming Stripe webhooks are validated with the configured signing secret. Only verified `checkout.session.completed` events update balances, and the raw payload is stored for auditing.
 
 ```php
-// app/Http/Controllers/PaymentWebhookController.php
-public function handle(Request $request)
-{
-    $signature = $request->header('X-Payment-Signature');
-    $payload = $request->getContent();
+// app/Controllers/PaymentController.php (webhook)
+$payload = file_get_contents('php://input') ?: '';
+$sig     = $_SERVER['HTTP_STRIPE_SIGNATURE'] ?? '';
+$secret  = (string)($this->cfgGet('stripe.webhook_secret', '') ?? '');
 
-    if (!hash_equals(hash_hmac('sha256', $payload, config('services.payment.secret')), $signature)) {
-        abort(403, 'Invalid signature');
-    }
+try {
+    $event = \Stripe\Webhook::constructEvent($payload, $sig, $secret);
+} catch (\UnexpectedValueException | \Stripe\Exception\SignatureVerificationException) {
+    http_response_code(400);
+    echo 'Invalid payload';
+    return;
+}
 
-    $event = json_decode($payload, true);
-    PaymentService::processEvent($event);
+if ($event->type === 'checkout.session.completed') {
+    $pdo = DB::conn();
+    $pdo->beginTransaction();
+    ... // update stripe_payments + user entitlements
+    $pdo->commit();
 }
 ```
 
-- Validate webhook origin using shared secrets or asymmetric signatures.  
-- Ensure idempotency by tracking processed event IDs.  
-- Confirm payment status with provider before granting access.
+**Solution for Threat 2: CSRF tokens on every form + role checks**
 
-**Solution for Threat 2: CSRF Protection Tokens**
+Credit and premium purchase forms include synchroniser tokens. Controllers reject requests when the submitted token does not match the session value.
 
 ```php
-// resources/views/payments/subscribe.blade.php
-<form method="POST" action="{{ route('payments.subscribe') }}">
-    @csrf
-    <!-- subscription fields -->
-</form>
+// app/Controllers/PaymentController.php (checkoutCredits)
+Auth::requireRole(['Employer', 'Recruiter']);
+if (!$this->csrfOk()) {
+    $this->flash('danger', 'Invalid session.');
+    $this->redirect('/credits');
+}
+$qty = (int)($_POST['credits_qty'] ?? 0);
+if (!in_array($qty, [5, 10, 50, 100, 250, 500], true)) {
+    $_SESSION['errors'] = ['credits_qty' => 'Please choose a valid credit amount.'];
+    $this->redirect('/credits');
+}
 ```
 
-- Use framework-provided CSRF middleware.  
-- Require POST/PUT/DELETE for state-changing endpoints.  
-- Validate SameSite cookies and check `Origin`/`Referer` headers for critical requests.
+CSRF helpers are also used by premium, refund, and admin-facing payment endpoints to prevent unwanted state changes.
+
 
 ## 5. Administration & Moderation Module
 
 ### 5.1 Potential Threat/Attack
-- **Threat 1: SQL Injection**  
-  Attackers may attempt to inject SQL queries via admin search/filter inputs to exfiltrate data.
-- **Threat 2: API and Session Hijacking**  
-  Session tokens or API keys might be stolen or misused to gain admin privileges.
 
-### 5.2 Secure Coding Practice
+- **Threat 1: SQL Injection** – Malicious search/filter input injected into admin queries to extract or alter data.
+- **Threat 2: API and Session Hijacking** – Stolen cookies or unauthorised roles accessing privileged administration pages.
 
-**Solution for Threat 1: Parameterized Queries & ORM Usage**
+### 5.2 Secure Coding Practices Implemented in HireMe
+
+**Solution for Threat 1: Prepared statements and whitelisted filters**
+
+Admin list pages use PDO prepared statements with bound parameters for every dynamic clause. Only expected filters are concatenated into the SQL string, protecting against injection.
 
 ```php
-// app/Http/Controllers/Admin/UserController.php
-public function index(Request $request)
-{
-    $query = User::query();
+// app/Controllers/AdminController.php (employersIndex excerpt)
+if ($q !== '') {
+    $where[] = "(e.company_name LIKE :q OR e.email LIKE :q OR e.industry LIKE :q OR e.location LIKE :q OR e.contact_person_name LIKE :q OR e.contact_number LIKE :q)";
+    $bind[':q'] = "%$q%";
+}
+...
+$sql = "SELECT e.employer_id, e.company_name, e.email, ... FROM employers e $wsql ORDER BY e.created_at DESC LIMIT :limit OFFSET :offset";
+$st = $pdo->prepare($sql);
+foreach ($bind as $k => $v) $st->bindValue($k, $v);
+$st->bindValue(':limit', $per, \PDO::PARAM_INT);
+$st->bindValue(':offset', $offset, \PDO::PARAM_INT);
+$st->execute();
+```
 
-    if ($request->filled('email')) {
-        $query->where('email', 'like', '%'.$request->input('email').'%');
+**Solution for Threat 2: Strict role enforcement and hardened session cookies**
+
+Admin endpoints wrap every action with `requireAdmin()` which delegates to `Auth::requireRole('Admin')`. Sessions are initialised with secure cookie attributes, inactivity timeouts, and strict mode to reduce hijacking risk.
+
+```php
+// app/Controllers/AdminController.php
+private function requireAdmin(): void
+{
+    Auth::requireRole('Admin');
+}
+```
+
+```php
+// app/bootstrap.php (session bootstrap excerpt)
+$sessionOptions = [
+    'cookie_lifetime' => 0,
+    'cookie_path' => $cookieParams['path'] ?? '/',
+    'cookie_secure' => (($cookieParams['secure'] ?? false) || $isSecure),
+    'cookie_httponly' => true,
+    'cookie_samesite' => ucfirst($normalisedSameSite),
+    'use_strict_mode' => 1,
+    'gc_maxlifetime' => max($timeoutSeconds, (int) ini_get('session.gc_maxlifetime')),
+];
+$startSession();
+...
+if (isset($_SESSION['user'])) {
+    $lastActivity = $_SESSION['last_activity'] ?? null;
+    if (is_int($lastActivity) && ($now - $lastActivity) > $timeoutSeconds) {
+        $_SESSION = [];
+        session_destroy();
+        $startSession();
+        $_SESSION['flash'] = [
+            'type' => 'warning',
+            'message' => 'Your session expired due to inactivity. Please log in again.',
+        ];
     }
-
-    return view('admin.users.index', ['users' => $query->paginate(50)]);
 }
 ```
 
-- Avoid raw SQL; use query builders or prepared statements.  
-- Validate and normalize input before use.  
-- Apply least privilege to the database credentials used by the application.
+Together, these measures ensure that only authenticated admin users retain access, sessions are short-lived, and cookies cannot be read or replayed via client-side scripts.
 
-**Solution for Threat 2: Secure Session & API Key Management**
+---
 
-```php
-// config/session.php
-'regenerate_on_every_request' => true,
-'cookie' => [
-    'secure' => true,
-    'http_only' => true,
-    'same_site' => 'lax',
-],
+The snippets above are taken directly from the current HireMe codebase to document how each module mitigates its respective threats.
 
-// app/Http/Middleware/AdminApiAuth.php
-public function handle($request, Closure $next)
-{
-    $token = $request->bearerToken();
-    abort_unless($token && hash_equals(cache()->get('admin_api_tokens:'.sha1($token)), 'valid'), 401);
-
-    return $next($request);
-}
-```
-
-- Rotate session IDs upon login and use secure cookies.  
-- Store API tokens hashed, enforce expiration, and bind them to device/IP if possible.  
-- Enable multi-factor authentication for admin accounts.  
-- Monitor for anomalous session activity and revoke compromised tokens immediately.
