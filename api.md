@@ -1,13 +1,13 @@
 
 # HireMe API Integration Contract
 
-All modules are exposed through the Laravel gateway at `http://localhost:8000/public/api/{module}/{type}/{id?}` using RESTful JSON payloads. Each response automatically includes a `module` field identifying the producer service. Optional query parameters are supplied via query string for GET requests and JSON bodies for non-GET requests.
+All modules are exposed through the Laravel gateway at `http://localhost/HireMe/public/api/{module}/{type}/{id?}` using RESTful JSON payloads. Each response automatically includes a `module` field identifying the producer service. Optional query parameters are supplied via query string for GET requests and JSON bodies for non-GET requests.
 
 ### Example API Request
 
 ```bash
 curl --request POST \
-     --url http://localhost:8000/public/api/user-management/authenticate \
+     --url http://localhost/HireMe/public/api/user-management/authenticate \
      --header 'Content-Type: application/json' \
      --data '{
        "email": "pat@example.com",
