@@ -7,11 +7,15 @@ namespace App\Services\Modules;
 use App\Core\Request;
 use App\Models\Billing;
 use App\Models\Payment;
+use App\Services\Admin\AdminRoleAwareInterface;
+use App\Services\Admin\AdminRoleAwareTrait;
 use App\Services\Payment\PaymentProcessor;
 use InvalidArgumentException;
 
-final class PaymentBillingService extends AbstractModuleService
+final class PaymentBillingService extends AbstractModuleService implements AdminRoleAwareInterface
 {
+    use AdminRoleAwareTrait;
+
     private PaymentProcessor $processor;
 
     public function __construct(?PaymentProcessor $processor = null)
@@ -28,10 +32,10 @@ final class PaymentBillingService extends AbstractModuleService
     {
         return match (strtolower($type)) {
             'payments' => $this->listPayments($request, $id),
-            'payment' => $this->showPayment($id),
+            'payment' => $this->showPayment($request, $id),
             'billing' => $this->listBilling($request, $id),
             'charge' => $this->charge($request),
-            'summary' => $this->summarise(),
+            'summary' => $this->summarise($request),
             default => throw new InvalidArgumentException(sprintf('Unknown payment/billing operation "%s".', $type)),
         };
     }
@@ -70,6 +74,12 @@ final class PaymentBillingService extends AbstractModuleService
             }
         }
 
+        $this->adminGuardian()->assertRead('payments', $this->adminContext($request, [
+            'action' => 'payments.list',
+            'status' => $status,
+            'scope' => $scope,
+        ]));
+
         $payments = $query->orderByDesc('created_at')->get();
 
         return $this->respond([
@@ -84,7 +94,7 @@ final class PaymentBillingService extends AbstractModuleService
     /**
      * @return array<string, mixed>
      */
-    private function showPayment(?string $id): array
+    private function showPayment(Request $request, ?string $id): array
     {
         $paymentId = $this->requireIntId($id, 'A payment identifier is required.');
         $payment = Payment::find($paymentId);
@@ -93,6 +103,13 @@ final class PaymentBillingService extends AbstractModuleService
         }
 
         $data = $payment->toArray();
+        $this->adminGuardian()->assertRead('payments', $this->adminContext($request, [
+            'action' => 'payments.show',
+            'payment_id' => $paymentId,
+            'user_type' => $data['user_type'] ?? null,
+            'user_id' => $data['user_id'] ?? null,
+        ]));
+
         $role = $this->roleForUserType($data['user_type'] ?? null);
         if ($role !== null && isset($data['user_id']) && is_numeric($data['user_id'])) {
             $user = $this->forward('user-management', 'user', (string) $data['user_id'], [
@@ -139,6 +156,11 @@ final class PaymentBillingService extends AbstractModuleService
             }
         }
 
+        $this->adminGuardian()->assertRead('billing', $this->adminContext($request, [
+            'action' => 'billing.list',
+            'scope' => $scope,
+        ]));
+
         $records = $query->orderByDesc('transaction_date')->get();
 
         return $this->respond([
@@ -150,8 +172,12 @@ final class PaymentBillingService extends AbstractModuleService
     /**
      * @return array<string, mixed>
      */
-    private function summarise(): array
+    private function summarise(Request $request): array
     {
+        $this->adminGuardian()->assertRead('payments', $this->adminContext($request, [
+            'action' => 'payments.summary',
+        ]));
+
         $totalPayments = Payment::query()->sum('amount');
         $paymentCount = Payment::query()->count();
 
@@ -252,6 +278,15 @@ final class PaymentBillingService extends AbstractModuleService
             throw new InvalidArgumentException('A payment amount must be provided.');
         }
 
+        $context = $this->adminContext($request, [
+            'action' => 'payments.charge',
+            'user_id' => (int) $userId,
+            'user_type' => $userType,
+            'amount' => $payload['amount'],
+        ]);
+
+        $this->adminGuardian()->assertWrite('payments', $context);
+
         $metadata = $this->normaliseMetadata($payload['metadata'] ?? null);
         $event = $this->processor->process([
             'user_id' => (int) $userId,
@@ -276,11 +311,22 @@ final class PaymentBillingService extends AbstractModuleService
             (string) ($eventPayload['user_type'] ?? $userType)
         );
 
-        return $this->respond([
+        $response = [
             'event' => $event->name(),
             'payment' => $paymentData,
             'billing' => $billing?->toArray(),
+        ];
+
+        $this->adminArbiter()->dispatch('payments.processed', [
+            'event' => $event->name(),
+            'user_id' => (int) $userId,
+            'user_type' => $userType,
+            'amount' => $payload['amount'],
+            'payment' => $paymentData,
         ]);
+        $this->adminArbiter()->flush();
+
+        return $this->respond($response);
     }
 
     /**

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Services\Modules;
 
 use App\Core\Request;
+use App\Services\Admin\AdminRoleAwareInterface;
+use App\Services\Admin\AdminRoleAwareTrait;
 use App\Services\Admin\Moderation\AdminRequestAuthorizer;
 use App\Services\Admin\Moderation\Commands\ApproveJobCommand;
 use App\Services\Admin\Moderation\Commands\AuditLogCommand;
@@ -18,10 +20,13 @@ use App\Services\Admin\Moderation\ModerationCommandResult;
 use App\Services\Admin\Moderation\ModerationSuspensionStore;
 use App\Services\Admin\Moderation\UserLookup;
 use DateTimeImmutable;
+use DateTimeInterface;
 use InvalidArgumentException;
 
-final class AdminModerationService extends AbstractModuleService
+final class AdminModerationService extends AbstractModuleService implements AdminRoleAwareInterface
 {
+    use AdminRoleAwareTrait;
+
     private ?ModerationSuspensionStore $suspensionStore = null;
     private ?UserLookup $userLookup = null;
 
@@ -35,13 +40,36 @@ final class AdminModerationService extends AbstractModuleService
         $bus = $this->makeCommandBus($request);
         $type = strtolower($type);
 
+        $context = $this->adminContext($request, [
+            'operation' => $type,
+            'target_id' => $id,
+        ]);
+
         return match ($type) {
-            'overview' => $this->respond($bus->dispatch(new OverviewCommand($this->registry, $this->suspensionStore()))->data()),
-            'metrics' => $this->respond($bus->dispatch(new MetricsCommand($this->suspensionStore()))->data()),
-            'audit' => $this->respond($bus->dispatch(new AuditLogCommand($this->registry, $this->suspensionStore()))->data()),
-            'approve-job' => $this->respondFromResult($bus->dispatch($this->makeApproveJobCommand($request, $id))),
-            'suspend-user' => $this->respondFromResult($bus->dispatch($this->makeSuspendUserCommand($request))),
-            'reinstate-user' => $this->respondFromResult($bus->dispatch($this->makeReinstateUserCommand($request))),
+            'overview' => $this->respondReadData(
+                fn () => $bus->dispatch(new OverviewCommand($this->registry, $this->suspensionStore()))->data(),
+                $context + ['action' => 'overview']
+            ),
+            'metrics' => $this->respondReadData(
+                fn () => $bus->dispatch(new MetricsCommand($this->suspensionStore()))->data(),
+                $context + ['action' => 'metrics']
+            ),
+            'audit' => $this->respondReadData(
+                fn () => $bus->dispatch(new AuditLogCommand($this->registry, $this->suspensionStore()))->data(),
+                $context + ['action' => 'audit']
+            ),
+            'approve-job' => $this->respondFromResult(
+                $bus->dispatch($this->makeApproveJobCommand($request, $id, $context)),
+                $context
+            ),
+            'suspend-user' => $this->respondFromResult(
+                $bus->dispatch($this->makeSuspendUserCommand($request, $context)),
+                $context
+            ),
+            'reinstate-user' => $this->respondFromResult(
+                $bus->dispatch($this->makeReinstateUserCommand($request, $context)),
+                $context
+            ),
             default => throw new InvalidArgumentException(sprintf('Unknown administration operation "%s".', $type)),
         };
     }
@@ -54,26 +82,64 @@ final class AdminModerationService extends AbstractModuleService
         );
     }
 
-    private function respondFromResult(ModerationCommandResult $result): array
+    private function respondFromResult(ModerationCommandResult $result, array $context): array
     {
-        return $this->respond([
+        $payload = [
             'result' => $result->toArray(),
+        ];
+
+        $this->adminArbiter()->dispatch('admin.moderation.' . $result->command(), [
+            'result' => $payload['result'],
+            'context' => $context,
         ]);
+        $this->adminArbiter()->flush();
+
+        return $this->respond($payload);
     }
 
-    private function makeApproveJobCommand(Request $request, ?string $id): ApproveJobCommand
+    /**
+     * @param callable():array<string, mixed> $producer
+     * @param array<string, mixed> $context
+     */
+    private function respondReadData(callable $producer, array $context): array
+    {
+        $this->adminGuardian()->assertRead('moderation', $context);
+        $this->adminGuardian()->audit('moderation.' . ($context['action'] ?? 'read'), $context);
+
+        $data = $producer();
+
+        return $this->respond($data);
+    }
+
+    private function makeApproveJobCommand(Request $request, ?string $id, array &$context): ApproveJobCommand
     {
         $jobId = $this->requireIntId($id, 'A job identifier is required.');
+
+        $context['action'] = 'approve-job';
+        $context['job_id'] = $jobId;
+        $this->adminGuardian()->assertWrite('moderation', $context);
+        $this->adminGuardian()->audit('moderation.approve-job', $context);
 
         return new ApproveJobCommand($jobId, $this->moderatorId($request));
     }
 
-    private function makeSuspendUserCommand(Request $request): SuspendUserCommand
+    private function makeSuspendUserCommand(Request $request, array &$context): SuspendUserCommand
     {
         $role = $this->requireUserRole($request);
         $userId = $this->requireUserId($request);
         $until = $this->parseSuspensionUntil($request);
         $reason = $this->suspensionReason($request);
+
+        $context['action'] = 'suspend-user';
+        $context['target_role'] = $role;
+        $context['target_user_id'] = $userId;
+        $context['suspend_until'] = $until?->format(DateTimeInterface::ATOM);
+        if ($reason !== null) {
+            $context['reason'] = $reason;
+        }
+
+        $this->adminGuardian()->assertWrite('moderation', $context);
+        $this->adminGuardian()->audit('moderation.suspend-user', $context);
 
         return new SuspendUserCommand(
             $role,
@@ -86,10 +152,16 @@ final class AdminModerationService extends AbstractModuleService
         );
     }
 
-    private function makeReinstateUserCommand(Request $request): ReinstateUserCommand
+    private function makeReinstateUserCommand(Request $request, array &$context): ReinstateUserCommand
     {
         $role = $this->requireUserRole($request);
         $userId = $this->requireUserId($request);
+
+        $context['action'] = 'reinstate-user';
+        $context['target_role'] = $role;
+        $context['target_user_id'] = $userId;
+        $this->adminGuardian()->assertWrite('moderation', $context);
+        $this->adminGuardian()->audit('moderation.reinstate-user', $context);
 
         return new ReinstateUserCommand(
             $role,

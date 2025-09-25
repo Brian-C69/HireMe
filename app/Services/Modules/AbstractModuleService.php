@@ -102,4 +102,91 @@ abstract class AbstractModuleService implements ModuleServiceInterface, Registry
 
         return is_string($value) ? $value : $fallback;
     }
+
+    /**
+     * Build a context payload for administrative guardians based on the
+     * incoming request headers and parameters.
+     *
+     * @param array<string, mixed> $context
+     *
+     * @return array<string, mixed>
+     */
+    protected function adminContext(Request $request, array $context = []): array
+    {
+        if (!isset($context['actor_id'])) {
+            $actorId = $this->actorIdFromRequest($request);
+            if ($actorId !== null) {
+                $context['actor_id'] = $actorId;
+            }
+        }
+
+        if (!isset($context['actor_role'])) {
+            $role = $this->actorRoleFromRequest($request);
+            if ($role !== null) {
+                $context['actor_role'] = $role;
+            }
+        }
+
+        $context['ip'] = $context['ip'] ?? $request->ip();
+        $context['user_agent'] = $context['user_agent'] ?? $request->userAgent();
+
+        return $context;
+    }
+
+    protected function actorIdFromRequest(Request $request): ?int
+    {
+        $candidates = [
+            $request->header('X-Admin-Id'),
+            $request->header('X-Moderator-Id'),
+            $request->header('X-User-Id'),
+            $request->query('admin_id'),
+            $request->input('admin_id'),
+            $request->query('user_id'),
+            $request->input('user_id'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = $this->normaliseInt($candidate);
+            if ($value !== null) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    protected function actorRoleFromRequest(Request $request): ?string
+    {
+        $candidates = [
+            $request->header('X-Admin-Role'),
+            $request->header('X-User-Role'),
+            $request->query('role'),
+            $request->input('role'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate)) {
+                $trimmed = trim($candidate);
+                if ($trimmed !== '') {
+                    return strtolower($trimmed);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function normaliseInt(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+
+        if (is_string($value) && ctype_digit($value)) {
+            $int = (int) $value;
+            return $int > 0 ? $int : null;
+        }
+
+        return null;
+    }
 }
