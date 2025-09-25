@@ -286,36 +286,65 @@ The User Management service can request financial context via `include=payments,
 
 * **Base URL:** `https://{host}/public/api/admin-moderation/{type}`
 * **Source Module:** Administration & Moderation
-* **Typical Consumers:** Admin dashboards, reporting tools
+* **Typical Consumers:** Admin dashboards, reporting tools, **and every feature module via the shared `ModuleGatewayController`**.
 
-| Type       | HTTP | URL Pattern                                         | Description                                                   |
-|------------|------|------------------------------------------------------|---------------------------------------------------------------|
-| `overview` | GET  | `/public/api/admin-moderation/overview`             | Top-level dashboard combining snapshots from all modules.     |
-| `metrics`  | GET  | `/public/api/admin-moderation/metrics`              | Key performance indicators across the system.                 |
-| `audit`    | GET  | `/public/api/admin-moderation/audit`                | Audit log combining pending users, flagged jobs, failed payments. |
+The Administration module now provides two roles:
 
-### Request Fields (IFA)
+1. **Guardian APIs** – synchronous policy, moderation, and risk checks that other modules must call during their own read/write operations.
+2. **Arbiter Events** – asynchronous webhooks that inform modules about review outcomes so they can enforce decisions after the fact.
 
-No additional query parameters are required for these summary endpoints.
+### Guardian Endpoints
 
-### Response Fields
+| Type               | HTTP | URL Pattern                                                   | Description |
+|--------------------|------|----------------------------------------------------------------|-------------|
+| `overview`         | GET  | `/public/api/admin-moderation/overview`                       | Top-level dashboard combining snapshots from all modules. |
+| `metrics`          | GET  | `/public/api/admin-moderation/metrics`                        | Key performance indicators across the system. |
+| `audit`            | GET  | `/public/api/admin-moderation/audit`                          | Centralised audit log spanning users, jobs, billing, and moderation. |
+| `moderation-scan`  | POST | `/public/api/admin-moderation/moderation/scan`                | Runs policy checks for jobs, resumes, profiles, or messages before they are persisted. |
+| `moderation-status`| GET  | `/public/api/admin-moderation/moderation/status`              | Returns latest moderation verdict for a given resource. |
+| `enforcement-user` | GET  | `/public/api/admin-moderation/enforcement/user/{id}`          | Inline ban/suspension check for account-level actions. |
+| `enforcement-org`  | GET  | `/public/api/admin-moderation/enforcement/org/{id}`           | Organisation enforcement status for billing or job posting. |
+| `audit-log-write`  | POST | `/public/api/admin-moderation/audit/logs`                     | Appends structured audit entries from other services. |
+| `flags`            | GET  | `/public/api/admin-moderation/flags{/{key}}`                  | Retrieves the global feature flag map or a single key. |
+| `flags-evaluate`   | POST | `/public/api/admin-moderation/flags/evaluate`                 | Resolves conditional flag overrides for a contextual request. |
+| `risk-score`       | POST | `/public/api/admin-moderation/risk/score`                     | Executes fraud heuristics and returns `{score, advise}` guidance. |
 
-| Field Name | Type   | Description                                                                  |
-|------------|--------|------------------------------------------------------------------------------|
-| `module`   | String | `admin-moderation`.                                                          |
-| `overview` | Object | Contains `users`, `jobs`, `finance`, and moderation counters.                |
-| `metrics`  | Object | Contains counts per entity type.                                             |
-| `audit`    | Object | Recent moderation queues with embedded `user`/`employer` data from other modules. |
+All guardian responses include a `module` field (`admin-moderation`) plus endpoint-specific payloads such as `allowed`, `actions`, `score`, and `advise` so that callers can enforce policy inline.
 
-**Consumption Example:** Each overview call internally orchestrates other services:
+### Arbiter Events
+
+After manual or automated reviews, the module dispatches webhook events:
+
+| Event Key                  | Trigger                                 | Typical Consumers |
+|----------------------------|-----------------------------------------|-------------------|
+| `admin.user.banned`        | User suspended or banned                | User Management, Authentication |
+| `admin.job.taken_down`     | Job removed following moderation        | Job Application, Payment/Billing |
+| `admin.profile.masked`     | Resume/profile redacted                 | Resume/Profile |
+| `admin.refund.approved`    | Refund approved during audit            | Payment/Billing |
+| `admin.flags.threshold.hit`| Flag rules breached                     | All modules monitoring feature thresholds |
+
+Webhooks include correlation identifiers that map back to guardian responses (e.g., moderation scan IDs) so consumers can reconcile asynchronous outcomes.
+
+### Request & Response Examples
 
 ```php
-$userSnapshot = $this->forward('user-management', 'users', 'all');
-$jobSnapshot = $this->forward('job-application', 'summary', 'all');
-$financeSnapshot = $this->forward('payment-billing', 'summary', 'all');
+// Job publishing workflow (synchronous guardian call)
+$verdict = $this->forward('admin-moderation', 'moderation-scan', 'jobs', [
+    'job_id' => $jobId,
+    'payload' => $jobDraft,
+]);
+
+if ($verdict['allowed'] === false) {
+    return $this->abort(409, $verdict['actions'] ?? []);
+}
+
+// Later, respond to the arbiter event asynchronously
+$this->on('admin.job.taken_down', function (array $event) {
+    $this->jobs->delist($event['job_id']);
+});
 ```
 
-This guarantees that administrative dashboards always use the same public APIs that external clients may call.
+User Management, Job Application, Payment/Billing, and Resume services now forward to these guardian endpoints during their read/write flows and subscribe to arbiter webhooks to react to policy decisions.
 
 ---
 

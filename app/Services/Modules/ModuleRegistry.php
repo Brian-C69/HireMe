@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace App\Services\Modules;
 
 use App\Core\Request;
+use App\Services\Admin\AdminArbiterInterface;
+use App\Services\Admin\AdminGuardianInterface;
+use App\Services\Admin\AdminRoleAwareInterface;
+use App\Services\Admin\DefaultAdminArbiter;
+use App\Services\Admin\DefaultAdminGuardian;
 use App\Services\Resume\Builder\ProfileDirector;
 use InvalidArgumentException;
 
@@ -16,6 +21,14 @@ final class ModuleRegistry
     /** @var array<string, string> */
     private array $aliases = [];
 
+    public function __construct(
+        private ?AdminGuardianInterface $adminGuardian = null,
+        private ?AdminArbiterInterface $adminArbiter = null
+    ) {
+        $this->adminGuardian = $adminGuardian ?? new DefaultAdminGuardian();
+        $this->adminArbiter = $adminArbiter ?? new DefaultAdminArbiter();
+    }
+
     public function register(ModuleServiceInterface $service, array $aliases = []): void
     {
         $key = strtolower($service->name());
@@ -23,6 +36,10 @@ final class ModuleRegistry
 
         if ($service instanceof RegistryAwareInterface) {
             $service->setRegistry($this);
+        }
+
+        if ($service instanceof AdminRoleAwareInterface) {
+            $service->setAdminRoles($this->adminGuardian, $this->adminArbiter);
         }
 
         $this->aliases[$key] = $key;

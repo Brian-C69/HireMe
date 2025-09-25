@@ -40,8 +40,9 @@ Major features are implemented through dedicated controllers:
   or company profiles.
 - **Payments** – `PaymentController` supports premium badges, credit purchases
   and Stripe webhooks.
-- **Administration** – `AdminController` exposes CRUD interfaces and metrics for
-  administrators.
+- **Administration** – `AdminController` exposes dashboards while
+  `AdminModerationService` brokers guardian policy APIs and arbiter events that
+  every other module must call or subscribe to during their own workflows.
 
 Controllers may delegate complex logic to service classes in `app/Services` and
 persist data through Eloquent models found under `app/Models`.
@@ -69,9 +70,9 @@ For example:
 - **Payments** – `Payment` and `StripePayment` models record transactions;
   `PaymentController` handles purchase requests and returns receipts via views
   in `app/Views/payments/`.
-- **Administration** – `Admin` models expose metrics and CRUD operations; the
-  `AdminController` renders administrative tables and forms in
-  `app/Views/admin/`.
+- **Administration** – Admin models feed dashboards, but policy enforcement now
+  flows through shared guardian endpoints (`/public/api/admin-moderation/*`) and
+  arbiter webhooks consumed by User, Job, Resume, and Payment modules.
 
 ## Object-Relational Mapping
 
