@@ -3,6 +3,21 @@
 
 All modules are exposed through the Laravel gateway at `http://localhost:8000/public/api/{module}/{type}/{id?}` using RESTful JSON payloads. Each response automatically includes a `module` field identifying the producer service. Optional query parameters are supplied via query string for GET requests and JSON bodies for non-GET requests.
 
+### Example API Request
+
+```bash
+curl --request POST \
+     --url http://localhost:8000/public/api/user-management/authenticate \
+     --header 'Content-Type: application/json' \
+     --data '{
+       "email": "pat@example.com",
+       "password": "My$ecret",
+       "role": "recruiters"
+     }'
+```
+
+This sample shows how to authenticate a recruiter through the Laravel gateway. Replace the payload values with real user credentials and adjust the endpoint to interact with other modules.
+
 ---
 
 ## 1. User Management & Authentication Module
@@ -65,6 +80,107 @@ Web Services Response Parameter (consume)
 | related.billing | array | optional | Billing ledger retrieved from Payment & Billing service. | [{"id":11,"status":"active"}] |
 | message | string | optional | Validation or error message on lookup failure. | User not found |
 
+#### Supporting Service Code
+
+```php
+// app/Services/Modules/UserManagementService.php
+public function handle(string $type, ?string $id, Request $request): array
+{
+    return match (strtolower($type)) {
+        'users' => $this->listUsers($request, $id),
+        'user' => $this->showUser($request, $id),
+        'authenticate', 'auth', 'login' => $this->authenticateUser($request),
+        default => throw new InvalidArgumentException(sprintf('Unknown user management operation "%s".', $type)),
+    };
+}
+
+/**
+ * @return array<string, mixed>
+ */
+private function authenticateUser(Request $request): array
+{
+    $email = $this->query($request, 'email', null) ?? (string) $request->input('email', '');
+    $password = $this->query($request, 'password', null) ?? (string) $request->input('password', '');
+    if ($email === '' || $password === '') {
+        throw new InvalidArgumentException('Email and password are required for authentication.');
+    }
+
+    $roleHint = $this->query($request, 'role') ?? (string) $request->input('role', '');
+    $context = $this->adminContext($request, [
+        'action' => 'users.authenticate',
+        'email' => $email,
+        'role_hint' => $roleHint,
+    ]);
+
+    $this->adminGuardian()->audit('users.authenticate.attempt', $context);
+
+    $rolesToCheck = [];
+    if ($roleHint !== '') {
+        $role = $this->normaliseRole($roleHint);
+        if ($role === null) {
+            throw new InvalidArgumentException(sprintf('Unknown user role "%s".', $roleHint));
+        }
+        $rolesToCheck[] = $role;
+    } else {
+        $rolesToCheck = array_keys(self::ROLE_MODELS);
+    }
+
+    foreach ($rolesToCheck as $role) {
+        $modelClass = $this->modelForRole($role);
+        if ($modelClass === null) {
+            continue;
+        }
+
+        /** @var Model|null $user */
+        $user = $modelClass::query()->where('email', $email)->first();
+        if ($user === null) {
+            continue;
+        }
+
+        $data = $user->toArray();
+        $hash = $data['password_hash'] ?? null;
+        if (is_string($hash) && $hash !== '' && password_verify($password, $hash)) {
+            unset($data['password_hash']);
+
+            $userId = $data[$user->getKeyName()] ?? null;
+            $successContext = $context + ['role' => $role];
+            if ($userId !== null && (is_int($userId) || ctype_digit((string) $userId))) {
+                $successContext['user_id'] = (int) $userId;
+            }
+
+            $this->adminGuardian()->assertRead('users', $successContext);
+            $this->adminGuardian()->audit('users.authenticate.success', $successContext);
+            $this->adminArbiter()->dispatch('admin.authenticated', [
+                'status' => 'success',
+                'role' => $role,
+                'email' => $email,
+                'user_id' => $successContext['user_id'] ?? null,
+            ]);
+            $this->adminArbiter()->flush();
+
+            return $this->respond([
+                'authenticated' => true,
+                'role' => $role,
+                'user' => $data,
+            ]);
+        }
+    }
+
+    $this->adminGuardian()->flag('users.authenticate', $context + ['status' => 'failed']);
+    $this->adminArbiter()->dispatch('admin.authenticated', [
+        'status' => 'failed',
+        'email' => $email,
+        'role_hint' => $roleHint,
+    ]);
+    $this->adminArbiter()->flush();
+
+    return $this->respond([
+        'authenticated' => false,
+        'message' => 'Invalid credentials provided.',
+    ]);
+}
+```
+
 ---
 
 ## 2. Resume & Profile Management Module
@@ -116,17 +232,118 @@ Web Services Response Parameter (consume)
 | resume | object | optional | Latest resume content plus rendered metadata. | {"id":77,"rendered_format":"pdf"} |
 | user | object | optional | User snapshot fetched from User Management. | {"id":15,"email":"talent@example.com"} |
 
+#### Supporting Service Code
+
+```php
+// app/Services/Modules/ResumeProfileService.php
+public function handle(string $type, ?string $id, Request $request): array
+{
+    return match (strtolower($type)) {
+        'resumes' => $this->listResumes($request, $id),
+        'resume' => $this->showResume($request, $id),
+        'profiles' => $this->listProfiles($request),
+        'profile' => $this->showProfile($request, $id),
+        default => throw new InvalidArgumentException(sprintf('Unknown resume/profile operation "%s".', $type)),
+    };
+}
+
+/**
+ * @return array<string, mixed>
+ */
+private function listResumes(Request $request, ?string $scope): array
+{
+    $query = Resume::query()->with('candidate');
+
+    $candidateId = null;
+    if ($scope !== null && $scope !== '' && $scope !== 'all' && ctype_digit($scope)) {
+        $candidateId = (int) $scope;
+    }
+
+    $candidateQuery = $this->query($request, 'candidate_id');
+    if ($candidateId === null && $candidateQuery !== null && ctype_digit($candidateQuery)) {
+        $candidateId = (int) $candidateQuery;
+    }
+
+    if ($candidateId !== null) {
+        $query->where('candidate_id', $candidateId);
+    }
+
+    $this->adminGuardian()->assertRead('resumes', $this->adminContext($request, [
+        'action' => 'resumes.list',
+        'candidate_id' => $candidateId,
+    ]));
+
+    $resumes = $query->orderByDesc('updated_at')->get();
+
+    $items = $resumes->map(static function (Resume $resume): array {
+        $data = $resume->toArray();
+        $candidate = $resume->candidate;
+        if ($candidate instanceof Model) {
+            $data['candidate'] = $candidate->toArray();
+        }
+        return $data;
+    })->all();
+
+    return $this->respond([
+        'resumes' => $items,
+        'count' => count($items),
+        'filters' => [
+            'candidate_id' => $candidateId,
+        ],
+    ]);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+private function showProfile(Request $request, ?string $id): array
+{
+    $candidateId = $this->requireIntId($id, 'A candidate identifier is required.');
+    $candidate = Candidate::find($candidateId);
+    if ($candidate === null) {
+        throw new InvalidArgumentException('Candidate profile not found.');
+    }
+
+    $this->adminGuardian()->assertRead('profiles', $this->adminContext($request, [
+        'action' => 'profiles.show',
+        'candidate_id' => $candidateId,
+    ]));
+
+    $resume = Resume::query()->where('candidate_id', $candidateId)->orderByDesc('updated_at')->first();
+
+    $userDetails = $this->forward('user-management', 'user', (string) $candidateId, [
+        'role' => 'candidates',
+    ]);
+
+    $resumeData = null;
+    if ($resume !== null) {
+        $resumeData = $resume->toArray();
+        $rendered = $this->renderResumeOutput($resume);
+        if ($rendered !== null) {
+            $resumeData['rendered_resume'] = $rendered['output'];
+            $resumeData['rendered_format'] = $rendered['format'];
+        }
+    }
+
+    return $this->respond([
+        'profile' => $candidate->toArray(),
+        'resume' => $resumeData,
+        'user' => $userDetails['user'] ?? null,
+    ]);
+}
+```
+
+---
+
+## 3. Job Posting & Application Module
 
 | Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
 |----------------------|------|-------------|---------------|-----------------|
-| Job Listings | GET | `/public/api/job-application/jobs/{scope?}` | `listJobs()` | Filterable listing by status, employer, recruiter, or custom scope hint.【F:app/Services/Modules/JobApplicationService.php†L29-L71】 |
-| Job Detail | GET | `/public/api/job-application/job/{id}` | `showJob()` | Retrieve a single job posting with full facade-provided context.【F:app/Services/Modules/JobApplicationService.php†L73-L86】 |
-| Application Listings | GET | `/public/api/job-application/applications` | `listApplications()` | Filterable by `job_id` and/or `candidate_id` and includes guardian auditing.【F:app/Services/Modules/JobApplicationService.php†L88-L118】 |
-| Application Detail | GET | `/public/api/job-application/application/{id}` | `showApplication()` | Returns an application plus candidate dossier via Resume/Profile service.【F:app/Services/Modules/JobApplicationService.php†L120-L138】 |
-| Jobs Summary | GET | `/public/api/job-application/summary/all` | `summarise()` | Aggregated reporting (counts, highlights) for dashboards with candidate enrichment.【F:app/Services/Modules/JobApplicationService.php†L140-L154】 |
-
-
-## 3. Job Posting & Application Module
+| Job Listings | GET | `/public/api/job-application/jobs/{scope?}` | `listJobs()` | Filterable listing by status, employer, recruiter, or custom scope hint. |
+| Job Detail | GET | `/public/api/job-application/job/{id}` | `showJob()` | Retrieve a single job posting with full facade-provided context. |
+| Application Listings | GET | `/public/api/job-application/applications` | `listApplications()` | Filterable by `job_id` and/or `candidate_id` and includes guardian auditing. |
+| Application Detail | GET | `/public/api/job-application/application/{id}` | `showApplication()` | Returns an application plus candidate dossier via Resume/Profile service. |
+| Jobs Summary | GET | `/public/api/job-application/summary/all` | `summarise()` | Aggregated reporting (counts, highlights) for dashboards with candidate enrichment. |
 
 ### 3.1 Job Listings with Recruiter/Employer Filters
 
@@ -176,6 +393,75 @@ Web Services Response Parameter (consume)
 | application | object | mandatory | Application attributes including status and job references. | {"id":501,"job_id":88,"status":"submitted"} |
 | candidate | object | optional | Candidate dossier retrieved from Resume/Profile. | {"candidate_id":55,"full_name":"Jane Doe"} |
 | job | object | optional | Job metadata forwarded from job facade. | {"id":88,"title":"Backend Engineer"} |
+
+#### Supporting Service Code
+
+```php
+// app/Services/Modules/JobApplicationService.php
+public function handle(string $type, ?string $id, Request $request): array
+{
+    return match (strtolower($type)) {
+        'jobs' => $this->listJobs($request, $id),
+        'job' => $this->showJob($request, $id),
+        'applications' => $this->listApplications($request),
+        'application' => $this->showApplication($request, $id),
+        'summary' => $this->summarise($request),
+        default => throw new InvalidArgumentException(sprintf('Unknown job/application operation "%s".', $type)),
+    };
+}
+
+/**
+ * @return array<string, mixed>
+ */
+private function listJobs(Request $request, ?string $scope): array
+{
+    $filters = [
+        'status' => $this->query($request, 'status'),
+        'scope' => $scope,
+    ];
+
+    $this->adminGuardian()->assertRead('jobs', $this->adminContext($request, [
+        'action' => 'jobs.list',
+        'filters' => array_filter($filters, static fn ($value) => $value !== null),
+    ]));
+
+    if ($employer = $this->query($request, 'employer_id')) {
+        if (ctype_digit($employer)) {
+            $filters['company_id'] = (int) $employer;
+        }
+    }
+
+    if ($recruiter = $this->query($request, 'recruiter_id')) {
+        if (ctype_digit($recruiter)) {
+            $filters['recruiter_id'] = (int) $recruiter;
+        }
+    }
+
+    $result = $this->facade->listJobs($filters);
+
+    return $this->respond($result);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+private function showApplication(Request $request, ?string $id): array
+{
+    $applicationId = $this->requireIntId($id, 'An application identifier is required.');
+
+    $this->adminGuardian()->assertRead('applications', $this->adminContext($request, [
+        'action' => 'applications.show',
+        'application_id' => $applicationId,
+    ]));
+
+    $result = $this->facade->showApplication(
+        $applicationId,
+        fn (int $candidateId) => $this->forward('resume-profile', 'profile', (string) $candidateId)
+    );
+
+    return $this->respond($result);
+}
+```
 
 ---
 
@@ -238,6 +524,146 @@ Web Services Response Parameter (consume)
 | payment | object | mandatory | Stored payment entity data. | {"id":301,"amount":199.99,"user_type":"employers"} |
 | billing | object | optional | Related billing record resolved or created. | {"id":17,"status":"active"} |
 
+#### Supporting Service Code
+
+```php
+// app/Services/Modules/PaymentBillingService.php
+public function handle(string $type, ?string $id, Request $request): array
+{
+    return match (strtolower($type)) {
+        'payments' => $this->listPayments($request, $id),
+        'payment' => $this->showPayment($request, $id),
+        'billing' => $this->listBilling($request, $id),
+        'charge' => $this->charge($request),
+        'summary' => $this->summarise($request),
+        default => throw new InvalidArgumentException(sprintf('Unknown payment/billing operation "%s".', $type)),
+    };
+}
+
+/**
+ * @return array<string, mixed>
+ */
+private function listPayments(Request $request, ?string $scope): array
+{
+    $query = Payment::query();
+
+    $status = $this->query($request, 'status');
+    if ($scope !== null && $scope !== '') {
+        $scopeLower = strtolower($scope);
+        if (in_array($scopeLower, ['pending', 'completed', 'failed', 'refunded'], true)) {
+            $status = $status ?? $scopeLower;
+        } elseif (str_starts_with($scopeLower, 'user-')) {
+            $identifier = substr($scopeLower, 5);
+            if (ctype_digit($identifier)) {
+                $query->where('user_id', (int) $identifier);
+            }
+        }
+    }
+
+    if ($status !== null && $status !== '') {
+        $query->where('transaction_status', $status);
+    }
+
+    if ($userType = $this->query($request, 'user_type')) {
+        $query->where('user_type', $userType);
+    }
+
+    if ($userId = $this->query($request, 'user_id')) {
+        if (ctype_digit($userId)) {
+            $query->where('user_id', (int) $userId);
+        }
+    }
+
+    $this->adminGuardian()->assertRead('payments', $this->adminContext($request, [
+        'action' => 'payments.list',
+        'status' => $status,
+        'scope' => $scope,
+    ]));
+
+    $payments = $query->orderByDesc('created_at')->get();
+
+    return $this->respond([
+        'payments' => $payments->map(static fn (Payment $payment) => $payment->toArray())->all(),
+        'count' => $payments->count(),
+        'filters' => [
+            'status' => $status,
+        ],
+    ]);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+private function charge(Request $request): array
+{
+    $payload = $request->all();
+
+    $userId = $payload['user_id'] ?? null;
+    if (!is_int($userId) && !ctype_digit((string) $userId)) {
+        throw new InvalidArgumentException('A valid user identifier is required to process a payment.');
+    }
+
+    $userType = (string) ($payload['user_type'] ?? '');
+    if ($userType === '') {
+        throw new InvalidArgumentException('A user type is required to process a payment.');
+    }
+
+    if (!array_key_exists('amount', $payload)) {
+        throw new InvalidArgumentException('A payment amount must be provided.');
+    }
+
+    $context = $this->adminContext($request, [
+        'action' => 'payments.charge',
+        'user_id' => (int) $userId,
+        'user_type' => $userType,
+        'amount' => $payload['amount'],
+    ]);
+
+    $this->adminGuardian()->assertWrite('payments', $context);
+
+    $metadata = $this->normaliseMetadata($payload['metadata'] ?? null);
+    $event = $this->processor->process([
+        'user_id' => (int) $userId,
+        'user_type' => $userType,
+        'amount' => $payload['amount'],
+        'purpose' => $payload['purpose'] ?? '',
+        'payment_method' => $payload['payment_method'] ?? 'manual',
+        'transaction_status' => $payload['transaction_status'] ?? ($payload['status'] ?? 'success'),
+        'transaction_id' => $payload['transaction_id'] ?? null,
+        'metadata' => $metadata,
+        'credits' => $this->normaliseCredits($payload['credits'] ?? null, $metadata),
+        'billing_id' => $this->normaliseBillingId($payload['billing_id'] ?? null),
+    ]);
+
+    $eventPayload = $event->payload();
+    $payment = $eventPayload['payment'] ?? null;
+    $paymentData = $payment instanceof Payment ? $payment->toArray() : (array) $payment;
+
+    $billing = $this->resolveBillingRecord(
+        $eventPayload,
+        (int) $userId,
+        (string) ($eventPayload['user_type'] ?? $userType)
+    );
+
+    $response = [
+        'event' => $event->name(),
+        'payment' => $paymentData,
+        'billing' => $billing?->toArray(),
+    ];
+
+    $this->adminArbiter()->dispatch('payments.processed', [
+        'event' => $event->name(),
+        'user_id' => (int) $userId,
+        'user_type' => $userType,
+        'amount' => $payload['amount'],
+        'payment' => $paymentData,
+    ]);
+    $this->adminArbiter()->flush();
+
+    return $this->respond($response);
+}
+```
+
 ---
 
 ## 5. Administration & Moderation Module
@@ -296,5 +722,88 @@ Web Services Response Parameter (consume)
 | result.payload.user_id | integer | optional | Identifier of the suspended account. | 35 |
 | result.payload.until | string | optional | Suspension expiry timestamp when provided. | 2024-06-30T23:59:59+00:00 |
 
+#### Supporting Service Code
 
+```php
+// app/Services/Modules/AdminModerationService.php
+public function handle(string $type, ?string $id, Request $request): array
+{
+    $bus = $this->makeCommandBus($request);
+    $type = strtolower($type);
+
+    $context = $this->adminContext($request, [
+        'operation' => $type,
+        'target_id' => $id,
+    ]);
+
+    return match ($type) {
+        'overview' => $this->respondReadData(
+            fn () => $bus->dispatch(new OverviewCommand($this->registry, $this->suspensionStore()))->data(),
+            $context + ['action' => 'overview']
+        ),
+        'metrics' => $this->respondReadData(
+            fn () => $bus->dispatch(new MetricsCommand($this->suspensionStore()))->data(),
+            $context + ['action' => 'metrics']
+        ),
+        'audit' => $this->respondReadData(
+            fn () => $bus->dispatch(new AuditLogCommand($this->registry, $this->suspensionStore()))->data(),
+            $context + ['action' => 'audit']
+        ),
+        'approve-job' => $this->respondFromResult(
+            $bus->dispatch($this->makeApproveJobCommand($request, $id, $context)),
+            $context
+        ),
+        'suspend-user' => $this->respondFromResult(
+            $bus->dispatch($this->makeSuspendUserCommand($request, $context)),
+            $context
+        ),
+        'reinstate-user' => $this->respondFromResult(
+            $bus->dispatch($this->makeReinstateUserCommand($request, $context)),
+            $context
+        ),
+        default => throw new InvalidArgumentException(sprintf('Unknown administration operation "%s".', $type)),
+    };
+}
+
+private function makeApproveJobCommand(Request $request, ?string $id, array &$context): ApproveJobCommand
+{
+    $jobId = $this->requireIntId($id, 'A job identifier is required.');
+
+    $context['action'] = 'approve-job';
+    $context['job_id'] = $jobId;
+    $this->adminGuardian()->assertWrite('moderation', $context);
+    $this->adminGuardian()->audit('moderation.approve-job', $context);
+
+    return new ApproveJobCommand($jobId, $this->moderatorId($request));
+}
+
+private function makeSuspendUserCommand(Request $request, array &$context): SuspendUserCommand
+{
+    $role = $this->requireUserRole($request);
+    $userId = $this->requireUserId($request);
+    $until = $this->parseSuspensionUntil($request);
+    $reason = $this->suspensionReason($request);
+
+    $context['action'] = 'suspend-user';
+    $context['target_role'] = $role;
+    $context['target_user_id'] = $userId;
+    $context['suspend_until'] = $until?->format(DateTimeInterface::ATOM);
+    if ($reason !== null) {
+        $context['reason'] = $reason;
+    }
+
+    $this->adminGuardian()->assertWrite('moderation', $context);
+    $this->adminGuardian()->audit('moderation.suspend-user', $context);
+
+    return new SuspendUserCommand(
+        $role,
+        $userId,
+        $this->suspensionStore(),
+        $this->userLookup(),
+        $until,
+        $reason,
+        $this->moderatorId($request)
+    );
+}
+```
 
