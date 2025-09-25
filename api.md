@@ -1,3 +1,4 @@
+
 # HireMe API Integration Contract
 
 All modules are exposed through the Laravel gateway at `http://localhost:8000/public/api/{module}/{type}/{id?}` using RESTful JSON payloads. Each response automatically includes a `module` field identifying the producer service. Optional query parameters are supplied via query string for GET requests and JSON bodies for non-GET requests.
@@ -115,7 +116,15 @@ Web Services Response Parameter (consume)
 | resume | object | optional | Latest resume content plus rendered metadata. | {"id":77,"rendered_format":"pdf"} |
 | user | object | optional | User snapshot fetched from User Management. | {"id":15,"email":"talent@example.com"} |
 
----
+
+| Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
+|----------------------|------|-------------|---------------|-----------------|
+| Job Listings | GET | `/public/api/job-application/jobs/{scope?}` | `listJobs()` | Filterable listing by status, employer, recruiter, or custom scope hint.【F:app/Services/Modules/JobApplicationService.php†L29-L71】 |
+| Job Detail | GET | `/public/api/job-application/job/{id}` | `showJob()` | Retrieve a single job posting with full facade-provided context.【F:app/Services/Modules/JobApplicationService.php†L73-L86】 |
+| Application Listings | GET | `/public/api/job-application/applications` | `listApplications()` | Filterable by `job_id` and/or `candidate_id` and includes guardian auditing.【F:app/Services/Modules/JobApplicationService.php†L88-L118】 |
+| Application Detail | GET | `/public/api/job-application/application/{id}` | `showApplication()` | Returns an application plus candidate dossier via Resume/Profile service.【F:app/Services/Modules/JobApplicationService.php†L120-L138】 |
+| Jobs Summary | GET | `/public/api/job-application/summary/all` | `summarise()` | Aggregated reporting (counts, highlights) for dashboards with candidate enrichment.【F:app/Services/Modules/JobApplicationService.php†L140-L154】 |
+
 
 ## 3. Job Posting & Application Module
 
@@ -296,3 +305,4 @@ Web Services Response Parameter (consume)
 3. Exercise endpoints with cURL or Postman using the URLs above and JSON payloads.
 
 All services return JSON responses and rely on guardian assertions defined in `AbstractModuleService` to enforce permissions.
+
