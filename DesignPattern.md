@@ -33,8 +33,7 @@ The authentication surface supports multiple user roles (candidate, employer, re
 
 ```
 
-```
-php
+```php
 // Use factory to find user + provider (strategy)
 $found = UserProviderFactory::findByEmail($pdo, $email); // returns ['provider'=>..., 'user'=>...]
 if (!$found || !password_verify($pass, (string)$found['user']['password_hash'])) {
