@@ -9,11 +9,15 @@ use App\Models\Admin;
 use App\Models\Candidate;
 use App\Models\Employer;
 use App\Models\Recruiter;
+use App\Services\Admin\AdminRoleAwareInterface;
+use App\Services\Admin\AdminRoleAwareTrait;
 use Illuminate\Database\Eloquent\Model;
 use InvalidArgumentException;
 
-final class UserManagementService extends AbstractModuleService
+final class UserManagementService extends AbstractModuleService implements AdminRoleAwareInterface
 {
+    use AdminRoleAwareTrait;
+
     /** @var array<string, class-string<Model>> */
     private const ROLE_MODELS = [
         'candidates' => Candidate::class,
@@ -59,6 +63,13 @@ final class UserManagementService extends AbstractModuleService
         $roleHint = $scope !== null && $scope !== '' ? $scope : ($this->query($request, 'role') ?? 'all');
         $role = $this->normaliseRole($roleHint);
 
+        $context = $this->adminContext($request, [
+            'action' => 'users.list',
+            'scope' => $roleHint,
+        ]);
+
+        $this->adminGuardian()->assertRead('users', $context);
+
         if ($role === null || $role === 'all') {
             $payload = [];
             $counts = [];
@@ -86,6 +97,8 @@ final class UserManagementService extends AbstractModuleService
 
         $collection = $modelClass::query()->orderBy($modelClass::CREATED_AT ?? 'created_at', 'desc')->get();
 
+        $this->adminGuardian()->audit('users.list.role', $context + ['role' => $role]);
+
         return $this->respond([
             'role' => $role,
             'users' => $collection->map(static fn (Model $record) => $record->toArray())->all(),
@@ -99,6 +112,10 @@ final class UserManagementService extends AbstractModuleService
     private function showUser(Request $request, ?string $id): array
     {
         $userId = $this->requireIntId($id, 'A numeric user identifier is required.');
+        $context = $this->adminContext($request, [
+            'action' => 'users.show',
+            'user_id' => $userId,
+        ]);
         $roleHint = $this->query($request, 'role');
 
         if ($roleHint !== null) {
@@ -112,6 +129,8 @@ final class UserManagementService extends AbstractModuleService
             if ($user === null) {
                 throw new InvalidArgumentException('User record not found.');
             }
+
+            $this->adminGuardian()->assertRead('users', $context + ['role' => $role]);
 
             [$related, $includes] = $this->loadRelatedData($request, $role, $userId);
 
@@ -134,6 +153,8 @@ final class UserManagementService extends AbstractModuleService
         foreach (self::ROLE_MODELS as $role => $modelClass) {
             $user = $modelClass::find($userId);
             if ($user !== null) {
+
+                $this->adminGuardian()->assertRead('users', $context + ['role' => $role]);
 
                 [$related, $includes] = $this->loadRelatedData($request, $role, $userId);
 
@@ -255,6 +276,14 @@ final class UserManagementService extends AbstractModuleService
         }
 
         $roleHint = $this->query($request, 'role') ?? (string) $request->input('role', '');
+        $context = $this->adminContext($request, [
+            'action' => 'users.authenticate',
+            'email' => $email,
+            'role_hint' => $roleHint,
+        ]);
+
+        $this->adminGuardian()->audit('users.authenticate.attempt', $context);
+
         $rolesToCheck = [];
         if ($roleHint !== '') {
             $role = $this->normaliseRole($roleHint);
@@ -283,6 +312,22 @@ final class UserManagementService extends AbstractModuleService
             if (is_string($hash) && $hash !== '' && password_verify($password, $hash)) {
                 unset($data['password_hash']);
 
+                $userId = $data[$user->getKeyName()] ?? null;
+                $successContext = $context + ['role' => $role];
+                if ($userId !== null && (is_int($userId) || ctype_digit((string) $userId))) {
+                    $successContext['user_id'] = (int) $userId;
+                }
+
+                $this->adminGuardian()->assertRead('users', $successContext);
+                $this->adminGuardian()->audit('users.authenticate.success', $successContext);
+                $this->adminArbiter()->dispatch('admin.authenticated', [
+                    'status' => 'success',
+                    'role' => $role,
+                    'email' => $email,
+                    'user_id' => $successContext['user_id'] ?? null,
+                ]);
+                $this->adminArbiter()->flush();
+
                 return $this->respond([
                     'authenticated' => true,
                     'role' => $role,
@@ -290,6 +335,14 @@ final class UserManagementService extends AbstractModuleService
                 ]);
             }
         }
+
+        $this->adminGuardian()->flag('users.authenticate', $context + ['status' => 'failed']);
+        $this->adminArbiter()->dispatch('admin.authenticated', [
+            'status' => 'failed',
+            'email' => $email,
+            'role_hint' => $roleHint,
+        ]);
+        $this->adminArbiter()->flush();
 
         return $this->respond([
             'authenticated' => false,

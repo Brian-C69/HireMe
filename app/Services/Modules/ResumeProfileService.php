@@ -7,6 +7,8 @@ namespace App\Services\Modules;
 use App\Core\Request;
 use App\Models\Candidate;
 use App\Models\Resume;
+use App\Services\Admin\AdminRoleAwareInterface;
+use App\Services\Admin\AdminRoleAwareTrait;
 use Illuminate\Database\Eloquent\Model;
 use InvalidArgumentException;
 use App\Services\Resume\Builder\HtmlProfileBuilder;
@@ -23,8 +25,10 @@ use function str_ends_with;
 use function trim;
 
 
-final class ResumeProfileService extends AbstractModuleService
+final class ResumeProfileService extends AbstractModuleService implements AdminRoleAwareInterface
 {
+    use AdminRoleAwareTrait;
+
     private ProfileDirector $profileDirector;
 
     public function __construct(?ProfileDirector $profileDirector = null)
@@ -41,9 +45,9 @@ final class ResumeProfileService extends AbstractModuleService
     {
         return match (strtolower($type)) {
             'resumes' => $this->listResumes($request, $id),
-            'resume' => $this->showResume($id),
+            'resume' => $this->showResume($request, $id),
             'profiles' => $this->listProfiles($request),
-            'profile' => $this->showProfile($id),
+            'profile' => $this->showProfile($request, $id),
             default => throw new InvalidArgumentException(sprintf('Unknown resume/profile operation "%s".', $type)),
         };
     }
@@ -69,6 +73,11 @@ final class ResumeProfileService extends AbstractModuleService
             $query->where('candidate_id', $candidateId);
         }
 
+        $this->adminGuardian()->assertRead('resumes', $this->adminContext($request, [
+            'action' => 'resumes.list',
+            'candidate_id' => $candidateId,
+        ]));
+
         $resumes = $query->orderByDesc('updated_at')->get();
 
         $items = $resumes->map(static function (Resume $resume): array {
@@ -92,13 +101,18 @@ final class ResumeProfileService extends AbstractModuleService
     /**
      * @return array<string, mixed>
      */
-    private function showResume(?string $id): array
+    private function showResume(Request $request, ?string $id): array
     {
         $resumeId = $this->requireIntId($id, 'A resume identifier is required.');
         $resume = Resume::query()->with('candidate')->find($resumeId);
         if ($resume === null) {
             throw new InvalidArgumentException('Resume record not found.');
         }
+
+        $this->adminGuardian()->assertRead('resumes', $this->adminContext($request, [
+            'action' => 'resumes.show',
+            'resume_id' => $resumeId,
+        ]));
 
         $payload = $resume->toArray();
         $candidate = $resume->candidate;
@@ -132,6 +146,10 @@ final class ResumeProfileService extends AbstractModuleService
             $query->where('city', $city);
         }
 
+        $this->adminGuardian()->assertRead('profiles', $this->adminContext($request, [
+            'action' => 'profiles.list',
+        ]));
+
         $candidates = $query->orderBy('full_name')->get();
 
         return $this->respond([
@@ -143,13 +161,18 @@ final class ResumeProfileService extends AbstractModuleService
     /**
      * @return array<string, mixed>
      */
-    private function showProfile(?string $id): array
+    private function showProfile(Request $request, ?string $id): array
     {
         $candidateId = $this->requireIntId($id, 'A candidate identifier is required.');
         $candidate = Candidate::find($candidateId);
         if ($candidate === null) {
             throw new InvalidArgumentException('Candidate profile not found.');
         }
+
+        $this->adminGuardian()->assertRead('profiles', $this->adminContext($request, [
+            'action' => 'profiles.show',
+            'candidate_id' => $candidateId,
+        ]));
 
         $resume = Resume::query()->where('candidate_id', $candidateId)->orderByDesc('updated_at')->first();
 

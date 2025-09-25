@@ -5,11 +5,15 @@ declare(strict_types=1);
 namespace App\Services\Modules;
 
 use App\Core\Request;
+use App\Services\Admin\AdminRoleAwareInterface;
+use App\Services\Admin\AdminRoleAwareTrait;
 use App\Services\Job\JobModuleFacade;
 use InvalidArgumentException;
 
-final class JobApplicationService extends AbstractModuleService
+final class JobApplicationService extends AbstractModuleService implements AdminRoleAwareInterface
 {
+    use AdminRoleAwareTrait;
+
     private JobModuleFacade $facade;
 
     public function __construct(?JobModuleFacade $facade = null)
@@ -26,10 +30,10 @@ final class JobApplicationService extends AbstractModuleService
     {
         return match (strtolower($type)) {
             'jobs' => $this->listJobs($request, $id),
-            'job' => $this->showJob($id),
+            'job' => $this->showJob($request, $id),
             'applications' => $this->listApplications($request),
-            'application' => $this->showApplication($id),
-            'summary' => $this->summarise(),
+            'application' => $this->showApplication($request, $id),
+            'summary' => $this->summarise($request),
             default => throw new InvalidArgumentException(sprintf('Unknown job/application operation "%s".', $type)),
         };
     }
@@ -43,6 +47,11 @@ final class JobApplicationService extends AbstractModuleService
             'status' => $this->query($request, 'status'),
             'scope' => $scope,
         ];
+
+        $this->adminGuardian()->assertRead('jobs', $this->adminContext($request, [
+            'action' => 'jobs.list',
+            'filters' => array_filter($filters, static fn ($value) => $value !== null),
+        ]));
 
         if ($employer = $this->query($request, 'employer_id')) {
             if (ctype_digit($employer)) {
@@ -64,9 +73,14 @@ final class JobApplicationService extends AbstractModuleService
     /**
      * @return array<string, mixed>
      */
-    private function showJob(?string $id): array
+    private function showJob(Request $request, ?string $id): array
     {
         $jobId = $this->requireIntId($id, 'A job identifier is required.');
+
+        $this->adminGuardian()->assertRead('jobs', $this->adminContext($request, [
+            'action' => 'jobs.show',
+            'job_id' => $jobId,
+        ]));
 
         return $this->respond($this->facade->showJob($jobId));
     }
@@ -78,17 +92,25 @@ final class JobApplicationService extends AbstractModuleService
     {
         $filters = [];
 
+        $context = [
+            'action' => 'applications.list',
+        ];
+
         if ($job = $this->query($request, 'job_id')) {
             if (ctype_digit($job)) {
                 $filters['job_id'] = (int) $job;
+                $context['job_id'] = (int) $job;
             }
         }
 
         if ($candidate = $this->query($request, 'candidate_id')) {
             if (ctype_digit($candidate)) {
                 $filters['candidate_id'] = (int) $candidate;
+                $context['candidate_id'] = (int) $candidate;
             }
         }
+
+        $this->adminGuardian()->assertRead('applications', $this->adminContext($request, $context));
 
         $result = $this->facade->listApplications($filters);
 
@@ -98,9 +120,14 @@ final class JobApplicationService extends AbstractModuleService
     /**
      * @return array<string, mixed>
      */
-    private function showApplication(?string $id): array
+    private function showApplication(Request $request, ?string $id): array
     {
         $applicationId = $this->requireIntId($id, 'An application identifier is required.');
+
+        $this->adminGuardian()->assertRead('applications', $this->adminContext($request, [
+            'action' => 'applications.show',
+            'application_id' => $applicationId,
+        ]));
 
         $result = $this->facade->showApplication(
             $applicationId,
@@ -113,8 +140,12 @@ final class JobApplicationService extends AbstractModuleService
     /**
      * @return array<string, mixed>
      */
-    private function summarise(): array
+    private function summarise(Request $request): array
     {
+        $this->adminGuardian()->assertRead('jobs', $this->adminContext($request, [
+            'action' => 'jobs.summary',
+        ]));
+
         $result = $this->facade->summarise(
             fn (int $candidateId) => $this->forward('resume-profile', 'profile', (string) $candidateId)
         );
