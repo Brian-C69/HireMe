@@ -3,6 +3,7 @@
 ## 1. User Management & Authentication Module
 
 ### 1.1 Potential Threat/Attack
+
 - **Threat 1: Brute Force Login Attack** – Automated scripts repeatedly submit credentials to guess a valid email/password pair.
 - **Threat 2: Password Reset Token Abuse** – Attackers try to reuse or brute-force password reset tokens to take over accounts.
 
@@ -66,11 +67,13 @@ $st->execute([':h' => $hash]);
 $provider->updatePassword($pdo, $email, $newHash);
 $pdo->prepare("UPDATE password_resets SET used_at=NOW() WHERE token_hash=:h")->execute([':h' => $hash]);
 $pdo->prepare("DELETE FROM password_resets WHERE email=:e AND used_at IS NULL")->execute([':e' => $email]);
+
 ```
 
 ## 2. Resume & Profile Management Module
 
 ### 2.1 Potential Threat/Attack
+
 - **Threat 1: File Upload Vulnerability** – Uploading executable or overly large files as profile photos, resumes, or verification documents.
 - **Threat 2: Unauthorized Profile Access** – Manipulating identifiers to read or modify another user’s profile data.
 
@@ -123,6 +126,7 @@ if (!$candidate) {
 ## 3. Job Posting & Application Module
 
 ### 3.1 Potential Threat/Attack
+
 - **Threat 1: Cross-Site Scripting (XSS)** – Malicious markup submitted via job descriptions, candidate summaries, or messaging.
 - **Threat 2: Access to Sensitive Data** – Employers or recruiters attempting to modify or read jobs that do not belong to them.
 
@@ -167,9 +171,11 @@ private function ownJob(PDO $pdo, int $jobId): ?array
 
 All state-changing actions call `Auth::requireRole(['Employer','Recruiter'])` and halt when `ownJob` returns `null`.
 
+
 ## 4. Payment & Billing Module
 
 ### 4.1 Potential Threat/Attack
+
 - **Threat 1: Fake Payment Confirmation** – Forged callbacks to unlock credits or premium features without real Stripe payments.
 - **Threat 2: Cross-Site Request Forgery (CSRF)** – Victims tricked into submitting payment or credit-purchase forms.
 
@@ -221,9 +227,11 @@ if (!in_array($qty, [5, 10, 50, 100, 250, 500], true)) {
 
 CSRF helpers are also used by premium, refund, and admin-facing payment endpoints to prevent unwanted state changes.
 
+
 ## 5. Administration & Moderation Module
 
 ### 5.1 Potential Threat/Attack
+
 - **Threat 1: SQL Injection** – Malicious search/filter input injected into admin queries to extract or alter data.
 - **Threat 2: API and Session Hijacking** – Stolen cookies or unauthorised roles accessing privileged administration pages.
 
@@ -292,3 +300,4 @@ Together, these measures ensure that only authenticated admin users retain acces
 ---
 
 The snippets above are taken directly from the current HireMe codebase to document how each module mitigates its respective threats.
+
