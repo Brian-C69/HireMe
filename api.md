@@ -1,161 +1,121 @@
-# HireMe Modular API Integration Field Agreement (IFA)
 
-## 1. Gateway & Transport Conventions
+# HireMe API Integration Contract
 
-* **Protocol:** HTTPS REST with JSON payloads (UTF-8). Authentication is handled per-module (most endpoints expect admin-level guardianship headers) and all responses include a top-level `module` key naming the producer service.【F:app/Services/Modules/AbstractModuleService.php†L52-L59】
-* **Canonical Route Pattern:**
-  ```
-  GET|POST|PUT|PATCH|DELETE https://{host}/public/api/{module}/{type}/{id?}
-  ```
-  The `ModuleGatewayController` resolves `{module}`, `{type}`, and optional `{id}`, routes the request to the registered module service, and converts exceptions into HTTP error responses.【F:app/Controllers/Api/ModuleGatewayController.php†L29-L49】
-* **Module Registry:** `ModuleRegistry::boot()` wires the five functional services below and exposes the `call()` helper so modules can invoke each other through the same REST contract (see the `forward()` helper in `AbstractModuleService`).【F:app/Services/Modules/ModuleRegistry.php†L74-L135】【F:app/Services/Modules/AbstractModuleService.php†L18-L49】
-
-Unless stated otherwise, optional query parameters must be provided as URL query strings for GET requests or JSON body fields for non-GET requests. Examples illustrate inter-module consumption through the registry.
+All modules are exposed through the Laravel gateway at `http://localhost:8000/public/api/{module}/{type}/{id?}` using RESTful JSON payloads. Each response automatically includes a `module` field identifying the producer service. Optional query parameters are supplied via query string for GET requests and JSON bodies for non-GET requests.
 
 ---
 
-## 2. User Management & Authentication Module
+## 1. User Management & Authentication Module
 
-* **Base URL:** `https://{host}/public/api/user-management/{type}/{id?}`
-* **Service Class:** `App\Services\Modules\UserManagementService`
-* **Consumers:** Resume/Profile, Job Application, Payment/Billing, Administration (via guardian checks)
+### 1.1 Login Verification & Session Context
 
-### 2.1 Service Exposure Matrix
+Webservice Mechanism Service Exposure: Login Verification & Session Context
+Protocol: RESTFUL
+Function Description: 1. Validates candidate/employer/recruiter/admin credentials across role models 2. Issues a sanitized user payload and role context when authentication succeeds
+Source Module: User Management & Authentication Module
+Target Module: Resume & Profile Management, Job Posting & Application, Payment & Billing, Administration & Moderation
+URL: http://localhost:8000/public/api/user-management/authenticate
+Function Name: authenticateUser()
 
-| Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
-|----------------------|------|-------------|---------------|-----------------|
-| User Directory | GET | `/public/api/user-management/users/{role?}` | `listUsers()` | List users across roles or within a specific role with counts.【F:app/Services/Modules/UserManagementService.php†L48-L107】 |
-| User Snapshot | GET | `/public/api/user-management/user/{id}` | `showUser()` | Retrieve one user; optional `include` flag enriches the response with cross-module data.【F:app/Services/Modules/UserManagementService.php†L112-L175】【F:app/Services/Modules/UserManagementService.php†L182-L239】 |
-| Authentication | POST/GET | `/public/api/user-management/authenticate` | `authenticateUser()` | Validate credentials and emit a sanitized user payload plus role metadata.【F:app/Services/Modules/UserManagementService.php†L240-L307】 |
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| email | string | mandatory | Login email checked against all role directories. | pat@example.com |
+| password | string | mandatory | Plaintext password verified against stored hashes. | My$ecret |
+| role | string | optional | Role hint to limit the lookup (`candidates`, `employers`, `recruiters`, `admins`). | recruiters |
 
-#### 2.1.1 `listUsers`
-* **Function Description:**
-  1. When `{role}` is omitted or equals `all`, returns a role-indexed map of users plus per-role and total counts.
-  2. When a supported role slug is provided (e.g., `candidates`, `employers`), returns only that cohort with a `count` field.
-* **Source Module:** User Management
-* **Target Modules:** Consumed by Resume/Profile (profile hydration), Job Application (employer dashboards), Payment/Billing (financial lookups), Admin Moderation (guardian audits).
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | user-management |
+| authenticated | boolean | mandatory | Indicates whether authentication succeeded. | true |
+| role | string | optional | Resolved role slug for the authenticated user. | recruiters |
+| user | object | optional | Sanitized user resource with identifiers and profile keys. | {"id": 9, "email": "pat@example.com"} |
+| message | string | optional | Failure reason returned when authentication fails. | Invalid credentials provided. |
 
-**Request Parameters**
+### 1.2 User Snapshot with Cross-Module Includes
 
-| Field | Type | Mandatory | Description | Example |
-|-------|------|-----------|-------------|---------|
-| `role` | Query/String or Path | Optional | Role filter: `all`, `candidates`, `employers`, `recruiters`, `admins` (aliases such as `talent` map to canonical roles). | `candidates` |
+Webservice Mechanism Service Exposure: User Snapshot with Cross-Module Includes
+Protocol: RESTFUL
+Function Description: 1. Retrieves a specific user record and optional role-scoped view 2. Enriches the response with resume, application, job, payment, or billing data through module forwarding
+Source Module: User Management & Authentication Module
+Target Module: Resume & Profile Management, Job Posting & Application, Payment & Billing
+URL: http://localhost:8000/public/api/user-management/user/{userId}
+Function Name: showUser()
 
-**Response Payload**
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| userId | path integer | mandatory | Numeric identifier for the requested user record. | 42 |
+| role | string | optional | Role slug/alias to constrain lookup (`candidates`, `employers`, etc.). | employers |
+| include | string | optional | Comma-separated related datasets (`profile`, `resume`, `applications`, `jobs`, `payments`, `billing`). | profile,resume |
 
-
-| Field | Type | Mandatory/Optional | Description | Format |
-|-------|------|--------------------|-------------|--------|
-| `module` | String | Mandatory | Module emitter identifier. | `user-management` |
-| `role` | String | Mandatory | Resolved role or `all` when aggregating. | `candidates` |
-| `users` | Array/Object | Mandatory | Array of user objects (single role) or role-keyed map (`role=all`). | `[ { "id": 5, "email": "talent@example.com" } ]` |
-| `count` | Integer | Optional | Single-role total count. Omitted when `role=all`. | `42` |
-| `counts` | Object | Optional | Per-role and total counts when `role=all`. | `{ "candidates": 30, "employers": 12, "total": 42 }` |
-
-
-#### 2.1.2 `showUser`
-* **Function Description:**
-  1. Accepts a numeric `{id}` and optional `role` hint to constrain lookup.
-  2. Supports comma-separated `include` values (`profile`, `resume`, `applications`, `jobs`, `payments`, `billing`) that trigger cross-module lookups via the registry.
-* **Source Module:** User Management
-* **Target Modules:** Resume/Profile (candidate dossier), Job Application (job/application summaries), Payment/Billing (financial history).
-
-**Request Parameters**
-
-| Field | Type | Mandatory | Description | Example |
-|-------|------|-----------|-------------|---------|
-| `id` | Path | Yes | Numeric user identifier. | `42` |
-| `role` | Query/String | Optional | Restrict search to a specific role slug/alias. | `employers` |
-| `include` | Query/String | Optional | Comma list of related datasets (`profile`, `resume`, `applications`, `jobs`, `payments`, `billing`). | `profile,resume` |
-
-**Response Payload**
-
-
-| Field | Type | Mandatory/Optional | Description | Format |
-|-------|------|--------------------|-------------|--------|
-| `module` | String | Mandatory | Module emitter identifier. | `user-management` |
-| `role` | String | Mandatory | Role slug associated with the user. | `employers` |
-| `user` | Object | Mandatory | Sanitized user resource without credentials. | `{ "id": 42, "email": "ceo@example.com" }` |
-| `includes` | Array | Optional | Echo of processed include keys. | `["profile","resume"]` |
-| `related` | Object | Optional | Keyed include payloads (profile, resume, applications, etc.). | `{ "profile": { ... }, "applications_count": 3 }` |
-| `message` | String | Optional | Error or validation message on failure. | `"User not found"` |
-
-
-#### 2.1.3 `authenticate`
-* **Function Description:**
-  1. Hash-verifies supplied credentials against all roles (or a hinted role).
-  2. Audits attempts via the admin guardian/arbiter and returns role context on success.
-* **Source Module:** User Management
-* **Target Modules:** Authentication clients, Admin Moderation (event feed `admin.authenticated`).
-
-**Request Parameters**
-
-| Field | Type | Mandatory | Description | Example |
-|-------|------|-----------|-------------|---------|
-| `email` | Query/String or JSON | Yes | Login email. | `pat@example.com` |
-| `password` | Query/String or JSON | Yes | Plaintext password to verify (hash comparison occurs internally). | `My$ecret` |
-| `role` | Query/String or JSON | Optional | Restrict authentication to a role alias (same options as above). | `recruiter` |
-
-**Response Payload**
-
-| Field | Type | Mandatory/Optional | Description | Format |
-|-------|------|--------------------|-------------|--------|
-| `module` | String | Mandatory | Module emitter identifier. | `user-management` |
-| `authenticated` | Boolean | Mandatory | Indicates whether authentication succeeded. | `true` / `false` |
-| `role` | String | Optional | Role slug for the authenticated user. | `recruiter` |
-| `user` | Object | Optional | Sanitized user resource when authentication succeeds. | `{ "id": 9, "email": "recruiter@example.com" }` |
-| `message` | String | Optional | Failure reason returned on authentication errors. | `"Invalid credentials provided."` |
-
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | user-management |
+| role | string | mandatory | Resolved role slug for the returned user. | employers |
+| user | object | mandatory | User attributes excluding credentials. | {"id": 42, "company_name": "Acme"} |
+| includes | array | optional | Echo of processed include keys. | ["profile","resume"] |
+| related.profile | object | optional | Candidate profile forwarded from Resume/Profile. | {"candidate_id": 42, "city": "New York"} |
+| related.resume | object | optional | Resume artifact forwarded from Resume/Profile. | {"id": 77, "rendered_format": "pdf"} |
+| related.applications | array | optional | Applications array forwarded from Job Application service. | [{"id":501,"job_id":88}] |
+| related.jobs | array | optional | Employer/recruiter job listings via Job Application service. | [{"id":88,"title":"Backend Engineer"}] |
+| related.payments | array | optional | Payments ledger retrieved from Payment & Billing service. | [{"id":301,"amount":199.99}] |
+| related.billing | array | optional | Billing ledger retrieved from Payment & Billing service. | [{"id":11,"status":"active"}] |
+| message | string | optional | Validation or error message on lookup failure. | User not found |
 
 ---
 
-## 3. Resume & Profile Management Module
+## 2. Resume & Profile Management Module
 
-* **Base URL:** `https://{host}/public/api/resume-profile/{type}/{id?}`
-* **Service Class:** `App\Services\Modules\ResumeProfileService`
-* **Consumers:** User Management, Job Application, Admin Moderation
+### 2.1 Resume Catalogue & Candidate Summary
 
-### 3.1 Service Exposure Matrix
+Webservice Mechanism Service Exposure: Resume Catalogue & Candidate Summary
+Protocol: RESTFUL
+Function Description: 1. Lists resumes optionally filtered by candidate scope 2. Embeds candidate information for downstream enrichment
+Source Module: Resume & Profile Management Module
+Target Module: User Management & Authentication, Job Posting & Application, Administration & Moderation
+URL: http://localhost:8000/public/api/resume-profile/resumes/{candidateId?}
+Function Name: listResumes()
 
-| Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
-|----------------------|------|-------------|---------------|-----------------|
-| Resume Catalogue | GET | `/public/api/resume-profile/resumes/{candidateId?}` | `listResumes()` | List resumes, optionally filtered by candidate, with embedded candidate info.【F:app/Services/Modules/ResumeProfileService.php†L44-L99】 |
-| Resume Detail | GET | `/public/api/resume-profile/resume/{id}` | `showResume()` | Fetch a resume, candidate data, and rendered output format metadata.【F:app/Services/Modules/ResumeProfileService.php†L104-L132】 |
-| Profile Directory | GET | `/public/api/resume-profile/profiles` | `listProfiles()` | List candidate profiles with optional verification/city filters.【F:app/Services/Modules/ResumeProfileService.php†L134-L159】 |
-| Profile Dossier | GET | `/public/api/resume-profile/profile/{candidateId}` | `showProfile()` | Aggregate candidate profile, latest resume (rendered), and user account info.【F:app/Services/Modules/ResumeProfileService.php†L164-L198】 |
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| candidateId | path integer | optional | Restricts the listing to resumes owned by a specific candidate. | 15 |
+| candidate_id | query string | optional | Alternate query filter for candidate scope. | 15 |
 
-**Common Request Parameters**
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | resume-profile |
+| resumes | array | mandatory | Resume records with embedded candidate data. | [{"id":77,"candidate":{"id":15,"full_name":"Jane Doe"}}] |
+| count | integer | optional | Total resumes returned in this result set. | 3 |
+| filters.candidate_id | integer | optional | Echo of the applied candidate filter. | 15 |
 
-| Field | Applies To | Type | Mandatory | Description | Example |
-|-------|------------|------|-----------|-------------|---------|
-| `candidate_id` | `resumes`, `applications` include | Query/String | Optional | Filter resumes by candidate when using the list endpoint. | `15` |
-| `verified_status` | `profiles` | Query/String | Optional | Filter by verification status (`pending`, `approved`, `rejected`). | `approved` |
-| `city` | `profiles` | Query/String | Optional | Filter by city name. | `New York` |
-| `id` | `resume`, `profile` | Path | Yes | Resume or candidate identifier. | `77` |
+### 2.2 Profile Dossier with Latest Resume & User Snapshot
 
-**Representative Response Fields**
+Webservice Mechanism Service Exposure: Profile Dossier with Latest Resume & User Snapshot
+Protocol: RESTFUL
+Function Description: 1. Aggregates candidate profile data with latest resume rendering 2. Forwards to User Management to attach the owning user account snapshot
+Source Module: Resume & Profile Management Module
+Target Module: User Management & Authentication, Job Posting & Application
+URL: http://localhost:8000/public/api/resume-profile/profile/{candidateId}
+Function Name: showProfile()
 
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| candidateId | path integer | mandatory | Candidate identifier used to load profile and resume. | 15 |
 
-| Field | Type | Mandatory/Optional | Description | Format |
-|-------|------|--------------------|-------------|--------|
-| `module` | String | Mandatory | Module emitter identifier. | `resume-profile` |
-| `resumes` | Array | Optional | Resume list payload including candidate data. | `[ { "id": 77, "candidate": { ... } } ]` |
-| `profiles` | Array | Optional | Profile directory payload. | `[ { "candidate_id": 15, "city": "New York" } ]` |
-| `profile` | Object | Optional | Candidate dossier payload. | `{ "candidate_id": 15, "summary": "Full-stack developer" }` |
-| `resume` | Object/Null | Optional | Latest resume with rendered artifacts. | `{ "id": 77, "rendered_format": "pdf" }` |
-| `user` | Object/Null | Optional | User snapshot fetched from User Management. | `{ "id": 15, "email": "talent@example.com" }` |
-| `count` | Integer | Optional | Record count accompanying list endpoints. | `12` |
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | resume-profile |
+| profile | object | mandatory | Candidate profile attributes. | {"candidate_id":15,"summary":"Full-stack developer"} |
+| resume | object | optional | Latest resume content plus rendered metadata. | {"id":77,"rendered_format":"pdf"} |
+| user | object | optional | User snapshot fetched from User Management. | {"id":15,"email":"talent@example.com"} |
 
-
----
-
-## 4. Job Posting & Application Module
-
-* **Base URL:** `https://{host}/public/api/job-application/{type}/{id?}`
-* **Service Class:** `App\Services\Modules\JobApplicationService`
-* **Consumers:** User Management (job includes), Resume/Profile (application enrichment), Admin Moderation (dashboards & approvals)
-
-### 4.1 Service Exposure Matrix
 
 | Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
 |----------------------|------|-------------|---------------|-----------------|
@@ -165,134 +125,184 @@ Unless stated otherwise, optional query parameters must be provided as URL query
 | Application Detail | GET | `/public/api/job-application/application/{id}` | `showApplication()` | Returns an application plus candidate dossier via Resume/Profile service.【F:app/Services/Modules/JobApplicationService.php†L120-L138】 |
 | Jobs Summary | GET | `/public/api/job-application/summary/all` | `summarise()` | Aggregated reporting (counts, highlights) for dashboards with candidate enrichment.【F:app/Services/Modules/JobApplicationService.php†L140-L154】 |
 
-**Request Parameters**
 
-| Field | Type | Mandatory | Description | Example |
-|-------|------|-----------|-------------|---------|
-| `status` | Query/String | Optional | Job lifecycle filter (`active`, `closed`, etc.). | `active` |
-| `scope` | Path/String | Optional | Free-form segment for custom views (e.g., `employer-portal`). | `employer-portal` |
-| `employer_id` | Query/String | Optional | Restrict jobs to employer ID (numeric). | `12` |
-| `recruiter_id` | Query/String | Optional | Restrict jobs to recruiter ID (numeric). | `9` |
-| `job_id` | Query/String | Optional | Filter applications by job ID. | `101` |
-| `candidate_id` | Query/String | Optional | Filter applications by candidate ID. | `55` |
-| `id` | Path | Yes | Job or application identifier for detail endpoints. | `87` |
+## 3. Job Posting & Application Module
 
-**Response Highlights**
+### 3.1 Job Listings with Recruiter/Employer Filters
 
+Webservice Mechanism Service Exposure: Job Listings with Recruiter/Employer Filters
+Protocol: RESTFUL
+Function Description: 1. Provides job listings filtered by status, employer, recruiter, or scope 2. Supports admin guardian auditing for job directory access
+Source Module: Job Posting & Application Module
+Target Module: Administration & Moderation, User Management & Authentication, Resume & Profile Management
+URL: http://localhost:8000/public/api/job-application/jobs/{scope?}
+Function Name: listJobs()
 
-| Field | Type | Mandatory/Optional | Description | Format |
-|-------|------|--------------------|-------------|--------|
-| `module` | String | Mandatory | Module emitter identifier. | `job-application` |
-| `jobs` | Array | Optional | Job listing payload with related company data. | `[ { "id": 201, "title": "Backend Engineer" } ]` |
-| `applications` | Array | Optional | Application records with embedded candidate/job info. | `[ { "id": 501, "candidate_id": 55 } ]` |
-| `count` | Integer | Optional | Record count attached to listings. | `24` |
-| `summary` | Object | Optional | Aggregated metrics for dashboards. | `{ "active_jobs": 12, "applications_today": 18 }` |
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| scope | path string | optional | Custom listing scope segment (e.g., portal views). | employer-portal |
+| status | query string | optional | Job lifecycle filter (`active`, `closed`, etc.). | active |
+| employer_id | query string | optional | Restrict jobs to a numeric employer account. | 12 |
+| recruiter_id | query string | optional | Restrict jobs to a numeric recruiter account. | 9 |
 
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | job-application |
+| jobs | array | mandatory | Job posting data with company and status fields. | [{"id":201,"title":"Backend Engineer","status":"active"}] |
+| count | integer | optional | Total jobs returned (when supplied by facade). | 24 |
+| filters | object | optional | Echo of filters applied to the listing. | {"status":"active"} |
 
----
+### 3.2 Application Detail with Candidate Dossier
 
-## 5. Payment & Billing Module
+Webservice Mechanism Service Exposure: Application Detail with Candidate Dossier
+Protocol: RESTFUL
+Function Description: 1. Retrieves a specific job application record 2. Invokes Resume/Profile service to attach candidate dossier data
+Source Module: Job Posting & Application Module
+Target Module: Resume & Profile Management, Administration & Moderation
+URL: http://localhost:8000/public/api/job-application/application/{applicationId}
+Function Name: showApplication()
 
-* **Base URL:** `https://{host}/public/api/payment-billing/{type}/{id?}`
-* **Service Class:** `App\Services\Modules\PaymentBillingService`
-* **Consumers:** User Management (financial includes), Admin Moderation (guardian write checks), external billing dashboards
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| applicationId | path integer | mandatory | Unique identifier for the application record. | 501 |
 
-### 5.1 Service Exposure Matrix
-
-| Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
-|----------------------|------|-------------|---------------|-----------------|
-| Payment Ledger | GET | `/public/api/payment-billing/payments/{scope?}` | `listPayments()` | Filterable list by status, user role, or embedded `user-{id}` scope segment.【F:app/Services/Modules/PaymentBillingService.php†L31-L92】 |
-| Payment Detail | GET | `/public/api/payment-billing/payment/{id}` | `showPayment()` | Retrieve a payment and enrich with user snapshot via User Management.【F:app/Services/Modules/PaymentBillingService.php†L94-L123】 |
-| Billing Ledger | GET | `/public/api/payment-billing/billing/{scope?}` | `listBilling()` | List billing records by status, user type, or scope hints.【F:app/Services/Modules/PaymentBillingService.php†L124-L170】 |
-| Process Charge | POST | `/public/api/payment-billing/charge` | `charge()` | Validate payload, process payment through `PaymentProcessor`, dispatch webhook events.【F:app/Services/Modules/PaymentBillingService.php†L31-L330】 |
-| Finance Summary | GET | `/public/api/payment-billing/summary/all` | `summarise()` | Aggregate totals, status breakdown, latest payments, billing count, and top payers with user enrichment.【F:app/Services/Modules/PaymentBillingService.php†L172-L243】 |
-
-**Key Request Parameters**
-
-| Field | Applies To | Type | Mandatory | Description | Example |
-|-------|------------|------|-----------|-------------|---------|
-| `status` | Payments/Billing | Query/String | Optional | Filter by transaction status (e.g., `pending`, `completed`). | `completed` |
-| `user_type` | Payments/Billing/Charge | Query/String | Optional (GET), Required (POST) | Role of the paying account (`candidates`, `employers`, `recruiters`, `admins`). | `employers` |
-| `user_id` | Payments/Billing/Charge | Query/String or JSON | Optional (GET), Required (POST) | Numeric account identifier. | `24` |
-| `amount` | Charge | JSON/Number | Yes | Amount to process. | `199.99` |
-| `payment_method` | Charge | JSON/String | Optional | Payment method label (`manual`, gateway name). | `stripe` |
-| `transaction_status` | Charge | JSON/String | Optional | Overrides resulting status (`success`, `failed`, etc.). | `success` |
-| `metadata` | Charge | JSON/Object or String | Optional | Additional context (credits, invoice references). | `{ "invoice": "INV-1001" }` |
-
-**Response Highlights**
-
-| Field | Type | Mandatory/Optional | Description | Format |
-|-------|------|--------------------|-------------|--------|
-| `module` | String | Mandatory | Module emitter identifier. | `payment-billing` |
-| `payments` / `billing` | Array | Optional | Ledger entries returned for list endpoints. | `[ { "id": 301, "status": "completed" } ]` |
-| `count` | Integer | Optional | Record count accompanying list responses. | `8` |
-| `payment` | Object | Optional | Detailed payment resource (detail/charge responses). | `{ "id": 301, "amount": 199.99 }` |
-| `summary` | Object | Optional | Aggregated finance metrics. | `{ "total_revenue": 1299.50, "top_payers": [ ... ] }` |
-| `event` | String | Optional | Event label raised by `charge()`. | `payment.processed` |
-
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | job-application |
+| application | object | mandatory | Application attributes including status and job references. | {"id":501,"job_id":88,"status":"submitted"} |
+| candidate | object | optional | Candidate dossier retrieved from Resume/Profile. | {"candidate_id":55,"full_name":"Jane Doe"} |
+| job | object | optional | Job metadata forwarded from job facade. | {"id":88,"title":"Backend Engineer"} |
 
 ---
 
-## 6. Administration & Moderation Module
+## 4. Payment & Billing Module
 
-* **Base URL:** `https://{host}/public/api/admin-moderation/{type}`
-* **Service Class:** `App\Services\Modules\AdminModerationService`
-* **Consumers:** All modules (guardian assertions and arbiter webhooks), admin dashboards
+### 4.1 Payment Ledger & Status Breakdown
 
-### 6.1 Service Exposure Matrix
+Webservice Mechanism Service Exposure: Payment Ledger & Status Breakdown
+Protocol: RESTFUL
+Function Description: 1. Returns payments filtered by status, user type, or scoped identifier 2. Provides counts and filter echoes for financial reconciliations
+Source Module: Payment & Billing Module
+Target Module: Administration & Moderation, User Management & Authentication
+URL: http://localhost:8000/public/api/payment-billing/payments/{scope?}
+Function Name: listPayments()
 
-| Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
-|----------------------|------|-------------|---------------|-----------------|
-| Moderation Overview | GET | `/public/api/admin-moderation/overview` | `handle('overview')` | Consolidate cross-module metrics for dashboards via command bus.【F:app/Services/Modules/AdminModerationService.php†L38-L59】 |
-| Moderation Metrics | GET | `/public/api/admin-moderation/metrics` | `handle('metrics')` | KPI snapshots (counts, trends) via `MetricsCommand`.【F:app/Services/Modules/AdminModerationService.php†L38-L59】 |
-| Audit Trail | GET | `/public/api/admin-moderation/audit` | `handle('audit')` | Centralised audit log aggregator. 【F:app/Services/Modules/AdminModerationService.php†L38-L59】|
-| Approve Job | POST | `/public/api/admin-moderation/approve-job/{jobId}` | `makeApproveJobCommand()` | Approve a job posting with moderator attribution. 【F:app/Services/Modules/AdminModerationService.php†L61-L125】|
-| Suspend User | POST | `/public/api/admin-moderation/suspend-user` | `makeSuspendUserCommand()` | Suspend a user with optional expiry and reason metadata. 【F:app/Services/Modules/AdminModerationService.php†L66-L147】|
-| Reinstate User | POST | `/public/api/admin-moderation/reinstate-user` | `makeReinstateUserCommand()` | Lift a suspension for a specific user role/id. 【F:app/Services/Modules/AdminModerationService.php†L69-L172】|
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| scope | path string | optional | Status segment (`pending`, `completed`, etc.) or `user-{id}` shortcut. | user-24 |
+| status | query string | optional | Explicit transaction status filter. | completed |
+| user_type | query string | optional | Role associated with the payment (`candidates`, `employers`, etc.). | employers |
+| user_id | query string | optional | Numeric account identifier when filtering ledger entries. | 24 |
 
-**Common Request Headers**
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | payment-billing |
+| payments | array | mandatory | Payment records returned for the filters. | [{"id":301,"amount":199.99,"transaction_status":"completed"}] |
+| count | integer | optional | Total number of payments in the response. | 8 |
+| filters.status | string | optional | Echo of the applied status filter. | completed |
 
-| Header | Purpose |
-|--------|---------|
-| `X-Admin-Id` / `X-Moderator-Id` | Used to identify the acting moderator for auditing and guardian checks.【F:app/Services/Modules/AdminModerationService.php†L193-L215】 |
-| `X-Admin-Role` | Supplies the actor role for guardian context (fallback to payload fields).【F:app/Services/Modules/AbstractModuleService.php†L200-L233】 |
+### 4.2 Charge Processing & Billing Linkage
 
-**Key Request Parameters**
+Webservice Mechanism Service Exposure: Charge Processing & Billing Linkage
+Protocol: RESTFUL
+Function Description: 1. Validates and processes a payment charge request through the payment processor 2. Emits payment and billing data plus webhook event name for downstream systems
+Source Module: Payment & Billing Module
+Target Module: Administration & Moderation, User Management & Authentication, External Billing Dashboards
+URL: http://localhost:8000/public/api/payment-billing/charge
+Function Name: charge()
 
-| Field | Applies To | Type | Mandatory | Description | Example |
-|-------|------------|------|-----------|-------------|---------|
-| `id` (path) | Approve Job | Path | Yes | Job identifier to approve. | `88` |
-| `role` / `user_role` | Suspend/Reinstate | JSON/String | Yes | Target user role (aliases accepted). | `employer` |
-| `user_id` / `id` / `target_id` | Suspend/Reinstate | JSON/String or Number | Yes | Target user identifier. | `35` |
-| `until` / `suspend_until` | Suspend | JSON/String | Optional | ISO-8601 timestamp for suspension expiry. | `2024-06-30T23:59:59Z` |
-| `reason` / `note` | Suspend | JSON/String | Optional | Moderation note stored with suspension. | `Fraudulent activity` |
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| user_id | integer | mandatory | Identifier of the paying account. | 24 |
+| user_type | string | mandatory | Role of the paying account (`candidates`, `employers`, etc.). | employers |
+| amount | number | mandatory | Amount to charge in decimal currency. | 199.99 |
+| purpose | string | optional | Narrative reason for the charge. | Subscription renewal |
+| payment_method | string | optional | Payment method label or gateway. | stripe |
+| transaction_status | string | optional | Overrides resulting status (`success`, `failed`, etc.). | success |
+| metadata | object/string | optional | Arbitrary JSON metadata (credits, invoice, etc.). | {"invoice":"INV-1001"} |
+| billing_id | integer | optional | Existing billing record to associate with payment. | 17 |
+| credits | integer | optional | Credits purchased or applied with the charge. | 10 |
 
-**Response Highlights**
-
-
-| Field | Type | Mandatory/Optional | Description | Format |
-|-------|------|--------------------|-------------|--------|
-| `module` | String | Mandatory | Module emitter identifier. | `admin-moderation` |
-| `result` | Object | Optional | Outcome details for write commands. | `{ "status": "approved", "job_id": 88 }` |
-| `overview` / `metrics` / `audit` | Object | Optional | Command-specific datasets returned for reads. | `{ "pending_jobs": 5, "suspensions": 2 }` |
-
-
-All administrative endpoints assert guardian permissions (`assertRead`/`assertWrite`) and emit arbiter events prefixed with `admin.moderation.` for downstream enforcement.【F:app/Services/Modules/AdminModerationService.php†L85-L112】
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | payment-billing |
+| event | string | mandatory | Payment processor event fired for observers. | payment.processed |
+| payment | object | mandatory | Stored payment entity data. | {"id":301,"amount":199.99,"user_type":"employers"} |
+| billing | object | optional | Related billing record resolved or created. | {"id":17,"status":"active"} |
 
 ---
 
-## 7. Inter-Module Consumption Examples
+## 5. Administration & Moderation Module
 
-* The User Management module requests candidate dossiers through Resume/Profile when `include=profile,resume` and attaches application/job/payment data via their respective services.【F:app/Services/Modules/UserManagementService.php†L182-L239】
-* The Payment & Billing module enriches payment summaries with user snapshots fetched from User Management before returning responses or producing webhook events.【F:app/Services/Modules/PaymentBillingService.php†L113-L219】
-* The Job Application module augments application detail and summary responses with Resume/Profile data by forwarding through the registry.【F:app/Services/Modules/JobApplicationService.php†L132-L153】
+### 5.1 Job Approval Command Dispatch
+
+Webservice Mechanism Service Exposure: Job Approval Command Dispatch
+Protocol: RESTFUL
+Function Description: 1. Validates moderator authority and approves a pending job 2. Dispatches moderation events through the arbiter for audit trails
+Source Module: Administration & Moderation Module
+Target Module: Job Posting & Application, User Management & Authentication
+URL: http://localhost:8000/public/api/admin-moderation/approve-job/{jobId}
+Function Name: makeApproveJobCommand() via handle('approve-job')
+
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| jobId | path integer | mandatory | Identifier of the job being approved. | 88 |
+| X-Admin-Id | header string | optional | Moderator identifier used for auditing. | 12 |
+| moderator_id | integer | optional | Moderator identifier fallback when header absent. | 12 |
+
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | admin-moderation |
+| result.command | string | mandatory | Command key executed by the moderation bus. | approve-job |
+| result.status | string | mandatory | Outcome status from the command. | approved |
+| result.payload.job_id | integer | optional | Echo of the approved job identifier. | 88 |
+
+### 5.2 User Suspension Lifecycle Management
+
+Webservice Mechanism Service Exposure: User Suspension Lifecycle Management
+Protocol: RESTFUL
+Function Description: 1. Suspends a user with optional expiry and moderation reason 2. Logs guardian audits and emits moderation events for enforcement
+Source Module: Administration & Moderation Module
+Target Module: User Management & Authentication, Resume & Profile Management, Payment & Billing
+URL: http://localhost:8000/public/api/admin-moderation/suspend-user
+Function Name: makeSuspendUserCommand() via handle('suspend-user')
+
+Web Services Request Parameter (provide)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| role | string | mandatory | Role slug for the target account. | employer |
+| user_id | integer | mandatory | Identifier of the account being suspended. | 35 |
+| until | string | optional | ISO-8601 timestamp specifying suspension expiry. | 2024-06-30T23:59:59Z |
+| reason | string | optional | Moderator-provided suspension note. | Fraudulent activity |
+| X-Admin-Id | header string | optional | Acting moderator identifier for audit trails. | 12 |
+
+Web Services Response Parameter (consume)
+| Field Name | Field Type | Mandatory/ Optional | Description | Format |
+|------------|-----------|----------------------|-------------|--------|
+| module | string | mandatory | Service emitter identifier. | admin-moderation |
+| result.command | string | mandatory | Command key executed by the moderation bus. | suspend-user |
+| result.status | string | mandatory | Outcome status from the command execution. | success |
+| result.payload.role | string | optional | Role that was suspended. | employer |
+| result.payload.user_id | integer | optional | Identifier of the suspended account. | 35 |
+| result.payload.until | string | optional | Suspension expiry timestamp when provided. | 2024-06-30T23:59:59+00:00 |
 
 ---
 
-## 8. Testing the API Locally
+## 6. Local Testing Notes
 
-1. Install PHP dependencies: `composer install`
-2. Start the built-in server: `php -S 0.0.0.0:8000 -t public`
-3. Exercise endpoints, e.g. `curl "http://localhost:8000/public/api/user-management/user/12?include=profile,applications"`
+1. Install dependencies: `composer install`
+2. Run the Laravel built-in server: `php -S 0.0.0.0:8000 -t public`
+3. Exercise endpoints with cURL or Postman using the URLs above and JSON payloads.
 
-All responses are JSON with HTTP status codes managed by the gateway controller. Errors return an `error` message and status-specific code.
+All services return JSON responses and rely on guardian assertions defined in `AbstractModuleService` to enforce permissions.
+
