@@ -13,24 +13,24 @@ The authentication surface supports multiple user roles (candidate, employer, re
 ### Implementation & Coding
 
 ```
-+----------------------+        +---------------------------+
-|  AuthController      |        |  UserProviderFactory      |
-|  doLogin()           | uses   |  providers()              |
-|  doRegister()        |------->|  findByEmail()            |
-|  processReset()      |        |  providerForRole()        |
-+----------------------+        +---------------------------+
-                                           |
-                                           | returns
-                                           v
-                             +------------------------------+
-                             |      UserProviderInterface    |
-                             +------------------------------+
-                             ^             ^             ^
-                             |             |             |
-                 +----------------+ +---------------+ +----------------+
-                 |CandidateProvider| |EmployerProvider| |RecruiterProvider|
-                 +----------------+ +---------------+ +----------------+
-```
++----------------------+                            +------------------------------+
+|  AuthController      |   --------------------->   |      UserProviderInterface   |
++----------------------+        depends on          +------------------------------+
+|  doLogin()           |                             |             |             |
+|  doRegister()        |                             v             v             v
+|  processReset()      |               +-----------------+ +----------------+ +-----------------+
++----------------------+               |CandidateProvider| |EmployerProvider| |RecruiterProvider|
+            |                          +-----------------+ +----------------+ +-----------------+
+            | uses
+            v
++---------------------------+
+|  UserProviderFactory      |
++---------------------------+
+|  providers()              |
+|  findByEmail()            |
+|  providerForRole()        |
++---------------------------+
+
 
 ```php
 // Use factory to find user + provider (strategy)
