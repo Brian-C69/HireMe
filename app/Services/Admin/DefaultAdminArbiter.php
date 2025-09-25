@@ -24,7 +24,9 @@ final class DefaultAdminArbiter implements AdminArbiterInterface
     public function __construct(?callable $listener = null, ?string $logPath = null)
     {
         $this->logPath = $logPath ?? dirname(__DIR__, 3) . '/storage/moderation/arbiter-events.log';
-        $this->registerListener(fn (string $event, array $payload): void => $this->writeLog($event, $payload));
+        $this->registerListener(function (string $event, array $payload): void {
+            $this->writeLog($event, $payload);
+        });
 
         if ($listener !== null) {
             $this->registerListener($listener);
