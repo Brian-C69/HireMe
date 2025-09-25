@@ -1,369 +1,285 @@
-# HireMe Modular API Interface Agreement (IFA)
+# HireMe Modular API Integration Field Agreement (IFA)
 
-## 1. Overview of the Service Mesh
+## 1. Gateway & Transport Conventions
 
-The HireMe platform exposes every business module through a shared RESTful gateway. JSON is used for both
-request and response payloads. Each web service is accessible under the predictable pattern:
+* **Protocol:** HTTPS REST with JSON payloads (UTF-8). Authentication is handled per-module (most endpoints expect admin-level guardianship headers) and all responses include a top-level `module` key naming the producer service.【F:app/Services/Modules/AbstractModuleService.php†L52-L59】
+* **Canonical Route Pattern:**
+  ```
+  GET|POST|PUT|PATCH|DELETE https://{host}/public/api/{module}/{type}/{id?}
+  ```
+  The `ModuleGatewayController` resolves `{module}`, `{type}`, and optional `{id}`, routes the request to the registered module service, and converts exceptions into HTTP error responses.【F:app/Controllers/Api/ModuleGatewayController.php†L29-L49】
+* **Module Registry:** `ModuleRegistry::boot()` wires the five functional services below and exposes the `call()` helper so modules can invoke each other through the same REST contract (see the `forward()` helper in `AbstractModuleService`).【F:app/Services/Modules/ModuleRegistry.php†L74-L135】【F:app/Services/Modules/AbstractModuleService.php†L18-L49】
 
-```
-GET|POST|PUT|PATCH|DELETE https://{host}/public/api/{function}/{type}/{id?}
-```
-
-* `{function}` identifies the module (for example `user-management`, `resume-profile`).
-* `{type}` selects the specific operation within that module (`users`, `profile`, `payments`, etc.).
-* `{id}` is optional and represents the resource identifier when required.
-
-The `App\Controllers\Api\ModuleGatewayController` resolves these segments, looks up the appropriate module
-in the `ModuleRegistry`, and dispatches the request to a dedicated module service. Each service uses Laravel's
-Eloquent models under the hood and always returns a JSON document with a `module` attribute identifying the
-producer module.
-
-### Web Service Consumption Between Modules
-
-All module classes extend `AbstractModuleService`, which provides a `forward()` helper. That helper simulates an
-internal HTTP call by building a `Request` object and dispatching it through the gateway again. This ensures that
-modules *consume* each other's REST endpoints instead of reaching directly into each other's databases. For
-example, the Payment & Billing module uses `forward()` to enrich payments with user information:
-
-```php
-$payments = $this->forward('user-management', 'user', (string) $data['user_id'], [
-    'role' => $role,
-]);
-```
-
-Every module below follows the same pattern: it exposes web services through the gateway and consumes services
-from peer modules where cross-module data is required.
+Unless stated otherwise, optional query parameters must be provided as URL query strings for GET requests or JSON body fields for non-GET requests. Examples illustrate inter-module consumption through the registry.
 
 ---
 
 ## 2. User Management & Authentication Module
 
 * **Base URL:** `https://{host}/public/api/user-management/{type}/{id?}`
+* **Service Class:** `App\Services\Modules\UserManagementService`
+* **Consumers:** Resume/Profile, Job Application, Payment/Billing, Administration (via guardian checks)
+
+### 2.1 Service Exposure Matrix
+
+| Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
+|----------------------|------|-------------|---------------|-----------------|
+| User Directory | GET | `/public/api/user-management/users/{role?}` | `listUsers()` | List users across roles or within a specific role with counts.【F:app/Services/Modules/UserManagementService.php†L48-L107】 |
+| User Snapshot | GET | `/public/api/user-management/user/{id}` | `showUser()` | Retrieve one user; optional `include` flag enriches the response with cross-module data.【F:app/Services/Modules/UserManagementService.php†L112-L175】【F:app/Services/Modules/UserManagementService.php†L182-L239】 |
+| Authentication | POST/GET | `/public/api/user-management/authenticate` | `authenticateUser()` | Validate credentials and emit a sanitized user payload plus role metadata.【F:app/Services/Modules/UserManagementService.php†L240-L307】 |
+
+#### 2.1.1 `listUsers`
+* **Function Description:**
+  1. When `{role}` is omitted or equals `all`, returns a role-indexed map of users plus per-role and total counts.
+  2. When a supported role slug is provided (e.g., `candidates`, `employers`), returns only that cohort with a `count` field.
 * **Source Module:** User Management
-* **Typical Consumers:** Resume/Profile, Job Application, Payment/Billing, Admin Moderation
-
-### 2.1 Operation: `users`
-
-| Attribute          | Value                                                       |
-|--------------------|-------------------------------------------------------------|
-| **Function Name**  | `listUsers`                                                 |
-| **HTTP Method**    | `GET`                                                       |
-| **URL**            | `/public/api/user-management/users/{role?}`                 |
-| **Purpose**        | Lists users by role or returns an all-role snapshot.        |
+* **Target Modules:** Consumed by Resume/Profile (profile hydration), Job Application (employer dashboards), Payment/Billing (financial lookups), Admin Moderation (guardian audits).
 
 **Request Parameters**
 
-| Field Name | Type   | Mandatory | Description                                                   | Format                          |
-|------------|--------|-----------|---------------------------------------------------------------|---------------------------------|
-| `role`     | String | Optional  | Query string filter. `all` or one of `candidates`, `employers`, `recruiters`, `admins`. | Lowercase slug                  |
-| `id`       | Path   | Optional  | When `{role}` path segment is used, it acts as the role filter. | `candidates` – `admins`       |
+| Field | Type | Mandatory | Description | Example |
+|-------|------|-----------|-------------|---------|
+| `role` | Query/String or Path | Optional | Role filter: `all`, `candidates`, `employers`, `recruiters`, `admins` (aliases such as `talent` map to canonical roles). | `candidates` |
 
 **Response Payload**
 
-| Field Name | Type   | Description                                            |
-|------------|--------|--------------------------------------------------------|
-| `module`   | String | Always `user-management`.                              |
-| `role`     | String | Resolved role key (`all`, `candidates`, `employers`, ...). |
-| `users`    | Object | Map of role => user arrays when `role=all`; otherwise a flat array of user records. |
-| `count(s)` | Object | Per-role counts and total when `role=all`.             |
+| Field | Type | Description |
+|-------|------|-------------|
+| `module` | String | Always `user-management`. |
+| `role` | String | Resolved role or `all`. |
+| `users` | Array/Object | Array of user records for a specific role or a map keyed by role when `role=all`. |
+| `count` | Integer | Present when filtering by a single role. |
+| `counts` | Object | Present when `role=all`; per-role and total counts. |
 
-*Example:* `GET /public/api/user-management/users/all`
-
-### 2.2 Operation: `user`
-
-| Attribute          | Value                                                       |
-|--------------------|-------------------------------------------------------------|
-| **Function Name**  | `showUser`                                                  |
-| **HTTP Method**    | `GET`                                                       |
-| **URL**            | `/public/api/user-management/user/{id}`                     |
-| **Purpose**        | Retrieves a single user and can aggregate related data from other modules.
+#### 2.1.2 `showUser`
+* **Function Description:**
+  1. Accepts a numeric `{id}` and optional `role` hint to constrain lookup.
+  2. Supports comma-separated `include` values (`profile`, `resume`, `applications`, `jobs`, `payments`, `billing`) that trigger cross-module lookups via the registry.
+* **Source Module:** User Management
+* **Target Modules:** Resume/Profile (candidate dossier), Job Application (job/application summaries), Payment/Billing (financial history).
 
 **Request Parameters**
 
-| Field Name | Type   | Mandatory | Description                                                                       | Format          |
-|------------|--------|-----------|-----------------------------------------------------------------------------------|-----------------|
-| `id`       | Path   | Yes       | Numeric identifier (candidate_id, employer_id, recruiter_id, admin_id).          | Digits only     |
-| `role`     | String | Optional  | Forces lookup within a specific role.                                            | Same as above   |
-| `include`  | String | Optional  | Comma-separated related datasets to pull (`profile`, `resume`, `applications`, `jobs`, `payments`, `billing`). | Comma-separated |
+| Field | Type | Mandatory | Description | Example |
+|-------|------|-----------|-------------|---------|
+| `id` | Path | Yes | Numeric user identifier. | `42` |
+| `role` | Query/String | Optional | Restrict search to a specific role slug/alias. | `employers` |
+| `include` | Query/String | Optional | Comma list of related datasets (`profile`, `resume`, `applications`, `jobs`, `payments`, `billing`). | `profile,resume` |
 
 **Response Payload**
 
-| Field Name   | Type   | Description                                                                                   |
-|--------------|--------|-----------------------------------------------------------------------------------------------|
-| `module`     | String | `user-management`.                                                                            |
-| `role`       | String | Resolved role.                                                                                |
-| `user`       | Object | The user data. Password hashes are automatically excluded.                                   |
-| `includes`   | Array  | Echo of the requested include list (only when provided).                                     |
-| `related`    | Object | Enriched datasets fetched from other modules (keys mirror the `include` list).               |
+| Field | Type | Description |
+|-------|------|-------------|
+| `module` | String | `user-management`. |
+| `role` | String | Role that matched the user. |
+| `user` | Object | Sanitized Eloquent record (password hash removed). |
+| `includes` | Array | Echo of requested include keys when any are loaded. |
+| `related` | Object | Cross-module datasets keyed by include name (e.g., `profile`, `applications_count`). |
+| `message` | String | Only present on validation errors (HTTP 400). |
 
-**Consumption Example:** The Resume/Profile module calls this endpoint to populate candidate profile responses:
-
-```php
-$userDetails = $this->forward('user-management', 'user', (string) $candidateId, [
-    'role' => 'candidates',
-]);
-```
-
-The User Management service itself can now also request related data by forwarding to other modules whenever `include` is set:
-
-```php
-$profile = $this->forward('resume-profile', 'profile', (string) $userId);
-$applications = $this->forward('job-application', 'applications', null, [
-    'candidate_id' => (string) $userId,
-]);
-```
-
-### 2.3 Operation: `authenticate`
-
-| Attribute          | Value                                                    |
-|--------------------|----------------------------------------------------------|
-| **Function Name**  | `authenticateUser`                                       |
-| **HTTP Method**    | `POST` (also accepts `GET` with query parameters)        |
-| **URL**            | `/public/api/user-management/authenticate`               |
-| **Purpose**        | Validates email/password credentials and identifies the role.
+#### 2.1.3 `authenticate`
+* **Function Description:**
+  1. Hash-verifies supplied credentials against all roles (or a hinted role).
+  2. Audits attempts via the admin guardian/arbiter and returns role context on success.
+* **Source Module:** User Management
+* **Target Modules:** Authentication clients, Admin Moderation (event feed `admin.authenticated`).
 
 **Request Parameters**
 
-| Field Name | Type   | Mandatory | Description                                      | Format               |
-|------------|--------|-----------|--------------------------------------------------|----------------------|
-| `email`    | String | Yes       | User email address.                              | Valid email          |
-| `password` | String | Yes       | Plaintext password to verify.                    | Any string           |
-| `role`     | String | Optional  | Restrict authentication to a specific role.      | Same as `role` above |
+| Field | Type | Mandatory | Description | Example |
+|-------|------|-----------|-------------|---------|
+| `email` | Query/String or JSON | Yes | Login email. | `pat@example.com` |
+| `password` | Query/String or JSON | Yes | Plaintext password to verify (hash comparison occurs internally). | `My$ecret` |
+| `role` | Query/String or JSON | Optional | Restrict authentication to a role alias (same options as above). | `recruiter` |
 
 **Response Payload**
 
-| Field Name      | Type    | Description                                              |
-|-----------------|---------|----------------------------------------------------------|
-| `module`        | String  | `user-management`.                                        |
-| `authenticated` | Boolean | `true` when credentials match.                            |
-| `role`          | String  | Role of the authenticated account (when successful).      |
-| `user`          | Object  | Sanitised user record (without password hashes).          |
-| `message`       | String  | Error message when authentication fails.                  |
+| Field | Type | Description |
+|-------|------|-------------|
+| `module` | String | `user-management`. |
+| `authenticated` | Boolean | `true` on success, `false` otherwise. |
+| `role` | String | Role of the authenticated user (omitted when unsuccessful). |
+| `user` | Object | Sanitized record for the authenticated user (omitted on failure). |
+| `message` | String | Failure reason such as `Invalid credentials provided.` |
 
 ---
 
 ## 3. Resume & Profile Management Module
 
 * **Base URL:** `https://{host}/public/api/resume-profile/{type}/{id?}`
-* **Source Module:** Resume/Profile
-* **Typical Consumers:** Job Application, Admin Moderation, User Management
+* **Service Class:** `App\Services\Modules\ResumeProfileService`
+* **Consumers:** User Management, Job Application, Admin Moderation
 
-| Type         | HTTP | URL Pattern                                           | Description                                                    |
-|--------------|------|--------------------------------------------------------|----------------------------------------------------------------|
-| `resumes`    | GET  | `/public/api/resume-profile/resumes/{candidateId?}`    | Lists resumes, optionally filtered by candidate.               |
-| `resume`     | GET  | `/public/api/resume-profile/resume/{id}`               | Returns a single resume with candidate context.                |
-| `profiles`   | GET  | `/public/api/resume-profile/profiles`                  | Lists candidate profiles with optional filters.                |
-| `profile`    | GET  | `/public/api/resume-profile/profile/{candidateId}`     | Full candidate dossier (profile + resume + linked user record).|
+### 3.1 Service Exposure Matrix
 
-### Request Fields (IFA)
+| Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
+|----------------------|------|-------------|---------------|-----------------|
+| Resume Catalogue | GET | `/public/api/resume-profile/resumes/{candidateId?}` | `listResumes()` | List resumes, optionally filtered by candidate, with embedded candidate info.【F:app/Services/Modules/ResumeProfileService.php†L44-L99】 |
+| Resume Detail | GET | `/public/api/resume-profile/resume/{id}` | `showResume()` | Fetch a resume, candidate data, and rendered output format metadata.【F:app/Services/Modules/ResumeProfileService.php†L104-L132】 |
+| Profile Directory | GET | `/public/api/resume-profile/profiles` | `listProfiles()` | List candidate profiles with optional verification/city filters.【F:app/Services/Modules/ResumeProfileService.php†L134-L159】 |
+| Profile Dossier | GET | `/public/api/resume-profile/profile/{candidateId}` | `showProfile()` | Aggregate candidate profile, latest resume (rendered), and user account info.【F:app/Services/Modules/ResumeProfileService.php†L164-L198】 |
 
-| Field Name        | Type   | Mandatory | Description                                            | Format                |
-|-------------------|--------|-----------|--------------------------------------------------------|-----------------------|
-| `candidate_id`    | Query  | Optional  | Filters `resumes` or `profiles` endpoints.            | Digits                |
-| `verified_status` | Query  | Optional  | `profiles` filter for KYC/verification status.        | `pending`, `approved`, `rejected` |
-| `city`            | Query  | Optional  | `profiles` city filter.                               | Free text             |
-| `id`              | Path   | Required for `resume`/`profile` endpoints.              | Digits                |
+**Common Request Parameters**
 
-### Response Fields
+| Field | Applies To | Type | Mandatory | Description | Example |
+|-------|------------|------|-----------|-------------|---------|
+| `candidate_id` | `resumes`, `applications` include | Query/String | Optional | Filter resumes by candidate when using the list endpoint. | `15` |
+| `verified_status` | `profiles` | Query/String | Optional | Filter by verification status (`pending`, `approved`, `rejected`). | `approved` |
+| `city` | `profiles` | Query/String | Optional | Filter by city name. | `New York` |
+| `id` | `resume`, `profile` | Path | Yes | Resume or candidate identifier. | `77` |
 
-| Field Name | Type   | Description                                                                  |
-|------------|--------|------------------------------------------------------------------------------|
-| `module`   | String | `resume-profile`.                                                            |
-| `resumes`  | Array  | Array of resume objects (for `resumes`).                                     |
-| `profiles` | Array  | Array of candidate objects (for `profiles`).                                 |
-| `profile`  | Object | Candidate data (for `profile`).                                              |
-| `resume`   | Object | Latest resume for candidate (for `profile`/`resume`).                        |
-| `user`     | Object | User data fetched from User Management (`profile` endpoint).                 |
+**Representative Response Fields**
 
-**Consumption Example:**
-
-```php
-$profile = $this->forward('resume-profile', 'profile', $candidateId);
-```
-
-Both the Job Application and User Management modules rely on this service to enrich candidate-centric responses.
+| Field | Type | Description |
+|-------|------|-------------|
+| `module` | String | `resume-profile`. |
+| `resumes` | Array | Array of resume records with nested `candidate` objects (list endpoint). |
+| `profiles` | Array | Candidate profiles (list endpoint). |
+| `profile` | Object | Candidate information (dossier endpoint). |
+| `resume` | Object/Null | Latest resume plus optional `rendered_resume` and `rendered_format` keys. |
+| `user` | Object/Null | User Management snapshot pulled via registry (dossier endpoint). |
+| `count` | Integer | Record count for list endpoints. |
 
 ---
 
 ## 4. Job Posting & Application Module
 
 * **Base URL:** `https://{host}/public/api/job-application/{type}/{id?}`
-* **Source Module:** Job Posting & Applications
-* **Typical Consumers:** Admin Moderation, User Management, Resume/Profile
+* **Service Class:** `App\Services\Modules\JobApplicationService`
+* **Consumers:** User Management (job includes), Resume/Profile (application enrichment), Admin Moderation (dashboards & approvals)
 
-| Type            | HTTP | URL Pattern                                             | Description                                                 |
-|-----------------|------|----------------------------------------------------------|-------------------------------------------------------------|
-| `jobs`          | GET  | `/public/api/job-application/jobs/{scope?}`             | Lists job postings with optional employer/recruiter filters.|
-| `job`           | GET  | `/public/api/job-application/job/{id}`                 | Detailed job posting with applications.                    |
-| `applications`  | GET  | `/public/api/job-application/applications`             | Lists applications with optional job/candidate filters.    |
-| `application`   | GET  | `/public/api/job-application/application/{id}`         | Single application plus candidate/job context.             |
-| `summary`       | GET  | `/public/api/job-application/summary/all`              | Aggregated statistics for admins/dashboards.               |
+### 4.1 Service Exposure Matrix
 
-### Request Fields (IFA)
+| Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
+|----------------------|------|-------------|---------------|-----------------|
+| Job Listings | GET | `/public/api/job-application/jobs/{scope?}` | `listJobs()` | Filterable listing by status, employer, recruiter, or custom scope hint.【F:app/Services/Modules/JobApplicationService.php†L29-L71】 |
+| Job Detail | GET | `/public/api/job-application/job/{id}` | `showJob()` | Retrieve a single job posting with full facade-provided context.【F:app/Services/Modules/JobApplicationService.php†L73-L86】 |
+| Application Listings | GET | `/public/api/job-application/applications` | `listApplications()` | Filterable by `job_id` and/or `candidate_id` and includes guardian auditing.【F:app/Services/Modules/JobApplicationService.php†L88-L118】 |
+| Application Detail | GET | `/public/api/job-application/application/{id}` | `showApplication()` | Returns an application plus candidate dossier via Resume/Profile service.【F:app/Services/Modules/JobApplicationService.php†L120-L138】 |
+| Jobs Summary | GET | `/public/api/job-application/summary/all` | `summarise()` | Aggregated reporting (counts, highlights) for dashboards with candidate enrichment.【F:app/Services/Modules/JobApplicationService.php†L140-L154】 |
 
-| Field Name     | Type   | Mandatory | Description                                                     | Format                          |
-|----------------|--------|-----------|-----------------------------------------------------------------|---------------------------------|
-| `status`       | Query  | Optional  | Filters jobs by lifecycle (`active`, `closed`, etc.).           | Enum                            |
-| `employer_id`  | Query  | Optional  | Restricts jobs to a specific employer.                          | Digits                          |
-| `recruiter_id` | Query  | Optional  | Restricts jobs to a recruiter.                                  | Digits                          |
-| `job_id`       | Query  | Optional  | Filters applications by job.                                    | Digits                          |
-| `candidate_id` | Query  | Optional  | Filters applications by candidate.                              | Digits                          |
-| `id`           | Path   | Required for `job` and `application` endpoints.                         | Digits                          |
+**Request Parameters**
 
-### Response Fields
+| Field | Type | Mandatory | Description | Example |
+|-------|------|-----------|-------------|---------|
+| `status` | Query/String | Optional | Job lifecycle filter (`active`, `closed`, etc.). | `active` |
+| `scope` | Path/String | Optional | Free-form segment for custom views (e.g., `employer-portal`). | `employer-portal` |
+| `employer_id` | Query/String | Optional | Restrict jobs to employer ID (numeric). | `12` |
+| `recruiter_id` | Query/String | Optional | Restrict jobs to recruiter ID (numeric). | `9` |
+| `job_id` | Query/String | Optional | Filter applications by job ID. | `101` |
+| `candidate_id` | Query/String | Optional | Filter applications by candidate ID. | `55` |
+| `id` | Path | Yes | Job or application identifier for detail endpoints. | `87` |
 
-| Field Name        | Type   | Description                                                         |
-|-------------------|--------|---------------------------------------------------------------------|
-| `module`          | String | `job-application`.                                                  |
-| `jobs`            | Array  | Jobs with embedded employer/recruiter data.                         |
-| `applications`    | Array  | Application records with candidate/job context.                      |
-| `summary`         | Object | Aggregate metrics (counts, top candidates).                          |
-| `profile`/`resume`| Object | Included in application detail responses via Resume/Profile module.  |
+**Response Highlights**
 
-**Consumption Examples:**
-
-* Admin Moderation service pulls system-wide dashboards:
-
-  ```php
-  $jobSnapshot = $this->forward('job-application', 'summary', 'all');
-  ```
-
-* User Management service can enrich an employer record when `include=jobs`:
-
-  ```php
-  $jobs = $this->forward('job-application', 'jobs', null, [
-      'employer_id' => (string) $userId,
-  ]);
-  ```
+| Field | Type | Description |
+|-------|------|-------------|
+| `module` | String | `job-application`. |
+| `jobs` | Array | Jobs with company/recruiter context from the facade. |
+| `applications` | Array | Application records with candidate/job context; may include `count`. |
+| `summary` | Object | Aggregated metrics returned by the facade. |
 
 ---
 
 ## 5. Payment & Billing Module
 
 * **Base URL:** `https://{host}/public/api/payment-billing/{type}/{id?}`
-* **Source Module:** Payment & Billing
-* **Typical Consumers:** Admin Moderation, User Management
+* **Service Class:** `App\Services\Modules\PaymentBillingService`
+* **Consumers:** User Management (financial includes), Admin Moderation (guardian write checks), external billing dashboards
 
-| Type       | HTTP | URL Pattern                                           | Description                                              |
-|------------|------|--------------------------------------------------------|----------------------------------------------------------|
-| `payments` | GET  | `/public/api/payment-billing/payments/{scope?}`        | Lists payments, supporting status and user filters.       |
-| `payment`  | GET  | `/public/api/payment-billing/payment/{id}`             | Single payment enriched with user information.            |
-| `billing`  | GET  | `/public/api/payment-billing/billing/{scope?}`         | Billing records for invoicing/credits.                    |
-| `summary`  | GET  | `/public/api/payment-billing/summary/all`              | Aggregated finance dashboard.                             |
+### 5.1 Service Exposure Matrix
 
-### Request Fields (IFA)
+| Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
+|----------------------|------|-------------|---------------|-----------------|
+| Payment Ledger | GET | `/public/api/payment-billing/payments/{scope?}` | `listPayments()` | Filterable list by status, user role, or embedded `user-{id}` scope segment.【F:app/Services/Modules/PaymentBillingService.php†L31-L92】 |
+| Payment Detail | GET | `/public/api/payment-billing/payment/{id}` | `showPayment()` | Retrieve a payment and enrich with user snapshot via User Management.【F:app/Services/Modules/PaymentBillingService.php†L94-L123】 |
+| Billing Ledger | GET | `/public/api/payment-billing/billing/{scope?}` | `listBilling()` | List billing records by status, user type, or scope hints.【F:app/Services/Modules/PaymentBillingService.php†L124-L170】 |
+| Process Charge | POST | `/public/api/payment-billing/charge` | `charge()` | Validate payload, process payment through `PaymentProcessor`, dispatch webhook events.【F:app/Services/Modules/PaymentBillingService.php†L31-L330】 |
+| Finance Summary | GET | `/public/api/payment-billing/summary/all` | `summarise()` | Aggregate totals, status breakdown, latest payments, billing count, and top payers with user enrichment.【F:app/Services/Modules/PaymentBillingService.php†L172-L243】 |
 
-| Field Name   | Type   | Mandatory | Description                                      | Format                  |
-|--------------|--------|-----------|--------------------------------------------------|-------------------------|
-| `status`     | Query  | Optional  | Filters by transaction status.                   | Enum (`pending`, `paid`, ... ) |
-| `user_type`  | Query  | Optional  | Filters by user role (`candidates`, `employers`, ...). | Lowercase slug          |
-| `user_id`    | Query  | Optional  | Filters payments/billing to a specific account.  | Digits                  |
-| `id`         | Path   | Required for `payment` detail.                           | Digits                  |
+**Key Request Parameters**
 
-### Response Fields
+| Field | Applies To | Type | Mandatory | Description | Example |
+|-------|------------|------|-----------|-------------|---------|
+| `status` | Payments/Billing | Query/String | Optional | Filter by transaction status (e.g., `pending`, `completed`). | `completed` |
+| `user_type` | Payments/Billing/Charge | Query/String | Optional (GET), Required (POST) | Role of the paying account (`candidates`, `employers`, `recruiters`, `admins`). | `employers` |
+| `user_id` | Payments/Billing/Charge | Query/String or JSON | Optional (GET), Required (POST) | Numeric account identifier. | `24` |
+| `amount` | Charge | JSON/Number | Yes | Amount to process. | `199.99` |
+| `payment_method` | Charge | JSON/String | Optional | Payment method label (`manual`, gateway name). | `stripe` |
+| `transaction_status` | Charge | JSON/String | Optional | Overrides resulting status (`success`, `failed`, etc.). | `success` |
+| `metadata` | Charge | JSON/Object or String | Optional | Additional context (credits, invoice references). | `{ "invoice": "INV-1001" }` |
 
-| Field Name    | Type   | Description                                                               |
-|---------------|--------|---------------------------------------------------------------------------|
-| `module`      | String | `payment-billing`.                                                        |
-| `payments`    | Array  | Payment records (for list endpoint).                                      |
-| `billing`     | Array  | Billing records.                                                          |
-| `summary`     | Object | Aggregated totals, latest payments, top payers.                           |
-| `payment`     | Object | Detail view including `user` data fetched from User Management.           |
+**Response Highlights**
 
-**Consumption Examples:**
-
-```php
-$user = $this->forward('user-management', 'user', (string) $payment->user_id, [
-    'role' => $role,
-]);
-```
-
-The User Management service can request financial context via `include=payments,billing` when returning an employer or candidate profile.
+| Field | Type | Description |
+|-------|------|-------------|
+| `module` | String | `payment-billing`. |
+| `payments`/`billing` | Array | Ledger entries for list endpoints. |
+| `count` | Integer | Record count for list responses. |
+| `payment` | Object | Payment detail (detail and charge responses). |
+| `summary` | Object | Aggregated finance metrics (`payments`, `billing`, `top_payers`). |
+| `event` | String | Event name emitted by `charge()` (e.g., processor outcome). |
 
 ---
 
 ## 6. Administration & Moderation Module
 
 * **Base URL:** `https://{host}/public/api/admin-moderation/{type}`
-* **Source Module:** Administration & Moderation
-* **Typical Consumers:** Admin dashboards, reporting tools, **and every feature module via the shared `ModuleGatewayController`**.
+* **Service Class:** `App\Services\Modules\AdminModerationService`
+* **Consumers:** All modules (guardian assertions and arbiter webhooks), admin dashboards
 
-The Administration module now provides two roles:
+### 6.1 Service Exposure Matrix
 
-1. **Guardian APIs** – synchronous policy, moderation, and risk checks that other modules must call during their own read/write operations.
-2. **Arbiter Events** – asynchronous webhooks that inform modules about review outcomes so they can enforce decisions after the fact.
+| Webservice Mechanism | HTTP | URL Pattern | Function Name | Primary Purpose |
+|----------------------|------|-------------|---------------|-----------------|
+| Moderation Overview | GET | `/public/api/admin-moderation/overview` | `handle('overview')` | Consolidate cross-module metrics for dashboards via command bus.【F:app/Services/Modules/AdminModerationService.php†L38-L59】 |
+| Moderation Metrics | GET | `/public/api/admin-moderation/metrics` | `handle('metrics')` | KPI snapshots (counts, trends) via `MetricsCommand`.【F:app/Services/Modules/AdminModerationService.php†L38-L59】 |
+| Audit Trail | GET | `/public/api/admin-moderation/audit` | `handle('audit')` | Centralised audit log aggregator. 【F:app/Services/Modules/AdminModerationService.php†L38-L59】|
+| Approve Job | POST | `/public/api/admin-moderation/approve-job/{jobId}` | `makeApproveJobCommand()` | Approve a job posting with moderator attribution. 【F:app/Services/Modules/AdminModerationService.php†L61-L125】|
+| Suspend User | POST | `/public/api/admin-moderation/suspend-user` | `makeSuspendUserCommand()` | Suspend a user with optional expiry and reason metadata. 【F:app/Services/Modules/AdminModerationService.php†L66-L147】|
+| Reinstate User | POST | `/public/api/admin-moderation/reinstate-user` | `makeReinstateUserCommand()` | Lift a suspension for a specific user role/id. 【F:app/Services/Modules/AdminModerationService.php†L69-L172】|
 
-### Guardian Endpoints
+**Common Request Headers**
 
-| Type               | HTTP | URL Pattern                                                   | Description |
-|--------------------|------|----------------------------------------------------------------|-------------|
-| `overview`         | GET  | `/public/api/admin-moderation/overview`                       | Top-level dashboard combining snapshots from all modules. |
-| `metrics`          | GET  | `/public/api/admin-moderation/metrics`                        | Key performance indicators across the system. |
-| `audit`            | GET  | `/public/api/admin-moderation/audit`                          | Centralised audit log spanning users, jobs, billing, and moderation. |
-| `moderation-scan`  | POST | `/public/api/admin-moderation/moderation/scan`                | Runs policy checks for jobs, resumes, profiles, or messages before they are persisted. |
-| `moderation-status`| GET  | `/public/api/admin-moderation/moderation/status`              | Returns latest moderation verdict for a given resource. |
-| `enforcement-user` | GET  | `/public/api/admin-moderation/enforcement/user/{id}`          | Inline ban/suspension check for account-level actions. |
-| `enforcement-org`  | GET  | `/public/api/admin-moderation/enforcement/org/{id}`           | Organisation enforcement status for billing or job posting. |
-| `audit-log-write`  | POST | `/public/api/admin-moderation/audit/logs`                     | Appends structured audit entries from other services. |
-| `flags`            | GET  | `/public/api/admin-moderation/flags{/{key}}`                  | Retrieves the global feature flag map or a single key. |
-| `flags-evaluate`   | POST | `/public/api/admin-moderation/flags/evaluate`                 | Resolves conditional flag overrides for a contextual request. |
-| `risk-score`       | POST | `/public/api/admin-moderation/risk/score`                     | Executes fraud heuristics and returns `{score, advise}` guidance. |
+| Header | Purpose |
+|--------|---------|
+| `X-Admin-Id` / `X-Moderator-Id` | Used to identify the acting moderator for auditing and guardian checks.【F:app/Services/Modules/AdminModerationService.php†L193-L215】 |
+| `X-Admin-Role` | Supplies the actor role for guardian context (fallback to payload fields).【F:app/Services/Modules/AbstractModuleService.php†L200-L233】 |
 
-All guardian responses include a `module` field (`admin-moderation`) plus endpoint-specific payloads such as `allowed`, `actions`, `score`, and `advise` so that callers can enforce policy inline.
+**Key Request Parameters**
 
-### Arbiter Events
+| Field | Applies To | Type | Mandatory | Description | Example |
+|-------|------------|------|-----------|-------------|---------|
+| `id` (path) | Approve Job | Path | Yes | Job identifier to approve. | `88` |
+| `role` / `user_role` | Suspend/Reinstate | JSON/String | Yes | Target user role (aliases accepted). | `employer` |
+| `user_id` / `id` / `target_id` | Suspend/Reinstate | JSON/String or Number | Yes | Target user identifier. | `35` |
+| `until` / `suspend_until` | Suspend | JSON/String | Optional | ISO-8601 timestamp for suspension expiry. | `2024-06-30T23:59:59Z` |
+| `reason` / `note` | Suspend | JSON/String | Optional | Moderation note stored with suspension. | `Fraudulent activity` |
 
-After manual or automated reviews, the module dispatches webhook events:
+**Response Highlights**
 
-| Event Key                  | Trigger                                 | Typical Consumers |
-|----------------------------|-----------------------------------------|-------------------|
-| `admin.user.banned`        | User suspended or banned                | User Management, Authentication |
-| `admin.job.taken_down`     | Job removed following moderation        | Job Application, Payment/Billing |
-| `admin.profile.masked`     | Resume/profile redacted                 | Resume/Profile |
-| `admin.refund.approved`    | Refund approved during audit            | Payment/Billing |
-| `admin.flags.threshold.hit`| Flag rules breached                     | All modules monitoring feature thresholds |
+| Field | Type | Description |
+|-------|------|-------------|
+| `module` | String | `admin-moderation`. |
+| `result` | Object | Command execution outcome for write operations (approve/suspend/reinstate). |
+| `overview`/`metrics`/`audit` | Object | Command-specific data structures for read endpoints. |
 
-Webhooks include correlation identifiers that map back to guardian responses (e.g., moderation scan IDs) so consumers can reconcile asynchronous outcomes.
-
-### Request & Response Examples
-
-```php
-// Job publishing workflow (synchronous guardian call)
-$verdict = $this->forward('admin-moderation', 'moderation-scan', 'jobs', [
-    'job_id' => $jobId,
-    'payload' => $jobDraft,
-]);
-
-if ($verdict['allowed'] === false) {
-    return $this->abort(409, $verdict['actions'] ?? []);
-}
-
-// Later, respond to the arbiter event asynchronously
-$this->on('admin.job.taken_down', function (array $event) {
-    $this->jobs->delist($event['job_id']);
-});
-```
-
-User Management, Job Application, Payment/Billing, and Resume services now forward to these guardian endpoints during their read/write flows and subscribe to arbiter webhooks to react to policy decisions.
+All administrative endpoints assert guardian permissions (`assertRead`/`assertWrite`) and emit arbiter events prefixed with `admin.moderation.` for downstream enforcement.【F:app/Services/Modules/AdminModerationService.php†L85-L112】
 
 ---
 
-## 7. Testing the Endpoints
+## 7. Inter-Module Consumption Examples
 
-1. Ensure dependencies are installed: `composer install`
-2. Start the PHP development server: `php -S 0.0.0.0:8000 -t public`
-3. Call any endpoint with your preferred HTTP client, e.g.
-
-```
-curl "http://localhost:8000/public/api/user-management/user/12?include=profile,applications"
-```
-
-All responses are JSON-formatted and include a `module` field so clients can confirm which service produced the payload.
+* The User Management module requests candidate dossiers through Resume/Profile when `include=profile,resume` and attaches application/job/payment data via their respective services.【F:app/Services/Modules/UserManagementService.php†L182-L239】
+* The Payment & Billing module enriches payment summaries with user snapshots fetched from User Management before returning responses or producing webhook events.【F:app/Services/Modules/PaymentBillingService.php†L113-L219】
+* The Job Application module augments application detail and summary responses with Resume/Profile data by forwarding through the registry.【F:app/Services/Modules/JobApplicationService.php†L132-L153】
 
 ---
 
-## 8. Change Log
+## 8. Testing the API Locally
 
-* Added an `include` contract to the User Management service so that it can consume other modules on demand.
-* Documented every module's public API with request/response IFA details and cross-module consumption examples.
+1. Install PHP dependencies: `composer install`
+2. Start the built-in server: `php -S 0.0.0.0:8000 -t public`
+3. Exercise endpoints, e.g. `curl "http://localhost:8000/public/api/user-management/user/12?include=profile,applications"`
 
+All responses are JSON with HTTP status codes managed by the gateway controller. Errors return an `error` message and status-specific code.
