@@ -36,12 +36,12 @@ Web Services Response Parameter (consume)
 ### 1.2 User Snapshot with Cross-Module Includes
 
 Webservice Mechanism Service Exposure: User Snapshot with Cross-Module Includes
-Protocol: RESTFUL
-Function Description: 1. Retrieves a specific user record and optional role-scoped view 2. Enriches the response with resume, application, job, payment, or billing data through module forwarding
-Source Module: User Management & Authentication Module
-Target Module: Resume & Profile Management, Job Posting & Application, Payment & Billing
-URL: http://localhost/HireMe/public/api/user-management/user/{userId}
-Function Name: showUser()
+##### Protocol: RESTFUL
+##### Function Description: 1. Retrieves a specific user record and optional role-scoped view 2. Enriches the response with resume, application, job, payment, or billing data through module forwarding
+##### Source Module: User Management & Authentication Module
+##### Target Module: Resume & Profile Management, Job Posting & Application, Payment & Billing
+##### URL: http://localhost/HireMe/public/api/user-management/user/{userId}
+##### Function Name: showUser()
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
@@ -72,12 +72,12 @@ Web Services Response Parameter (consume)
 ### 2.1 Resume Catalogue & Candidate Summary
 
 Webservice Mechanism Service Exposure: Resume Catalogue & Candidate Summary
-Protocol: RESTFUL
-Function Description: 1. Lists resumes optionally filtered by candidate scope 2. Embeds candidate information for downstream enrichment
-Source Module: Resume & Profile Management Module
-Target Module: User Management & Authentication, Job Posting & Application, Administration & Moderation
-URL: http://localhost/HireMe/public/api/resume-profile/resumes/{candidateId?}
-Function Name: listResumes()
+##### Protocol: RESTFUL
+##### Function Description: 1. Lists resumes optionally filtered by candidate scope 2. Embeds candidate information for downstream enrichment
+##### Source Module: Resume & Profile Management Module
+##### Target Module: User Management & Authentication, Job Posting & Application, Administration & Moderation
+##### URL: http://localhost/HireMe/public/api/resume-profile/resumes/{candidateId?}
+##### Function Name: listResumes()
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
@@ -131,12 +131,12 @@ Web Services Response Parameter (consume)
 ### 3.1 Job Listings with Recruiter/Employer Filters
 
 Webservice Mechanism Service Exposure: Job Listings with Recruiter/Employer Filters
-Protocol: RESTFUL
-Function Description: 1. Provides job listings filtered by status, employer, recruiter, or scope 2. Supports admin guardian auditing for job directory access
-Source Module: Job Posting & Application Module
-Target Module: Administration & Moderation, User Management & Authentication, Resume & Profile Management
-URL: http://localhost/HireMe/public/api/job-application/jobs/{scope?}
-Function Name: listJobs()
+##### Protocol: RESTFUL
+##### Function Description: 1. Provides job listings filtered by status, employer, recruiter, or scope 2. Supports admin guardian auditing for job directory access
+##### Source Module: Job Posting & Application Module
+##### Target Module: Administration & Moderation, User Management & Authentication, Resume & Profile Management
+##### URL: http://localhost/HireMe/public/api/job-application/jobs/{scope?}
+##### Function Name: listJobs()
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
@@ -156,13 +156,13 @@ Web Services Response Parameter (consume)
 
 ### 3.2 Application Detail with Candidate Dossier
 
-Webservice Mechanism Service Exposure: Application Detail with Candidate Dossier
-Protocol: RESTFUL
-Function Description: 1. Retrieves a specific job application record 2. Invokes Resume/Profile service to attach candidate dossier data
-Source Module: Job Posting & Application Module
-Target Module: Resume & Profile Management, Administration & Moderation
-URL: http://localhost/HireMe/public/api/job-application/application/{applicationId}
-Function Name: showApplication()
+##### Webservice Mechanism Service Exposure: Application Detail with Candidate Dossier
+##### Protocol: RESTFUL
+##### Function Description: 1. Retrieves a specific job application record 2. Invokes Resume/Profile service to attach candidate dossier data
+##### Source Module: Job Posting & Application Module
+##### Target Module: Resume & Profile Management, Administration & Moderation
+##### URL: http://localhost/HireMe/public/api/job-application/application/{applicationId}
+##### Function Name: showApplication()
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
@@ -184,12 +184,12 @@ Web Services Response Parameter (consume)
 ### 4.1 Payment Ledger & Status Breakdown
 
 Webservice Mechanism Service Exposure: Payment Ledger & Status Breakdown
-Protocol: RESTFUL
-Function Description: 1. Returns payments filtered by status, user type, or scoped identifier 2. Provides counts and filter echoes for financial reconciliations
-Source Module: Payment & Billing Module
-Target Module: Administration & Moderation, User Management & Authentication
-URL: http://localhost/HireMe/public/api/payment-billing/payments/{scope?}
-Function Name: listPayments()
+##### Protocol: RESTFUL
+##### Function Description: 1. Returns payments filtered by status, user type, or scoped identifier 2. Provides counts and filter echoes for financial reconciliations
+##### Source Module: Payment & Billing Module
+##### Target Module: Administration & Moderation, User Management & Authentication
+##### URL: http://localhost/HireMe/public/api/payment-billing/payments/{scope?}
+##### Function Name: listPayments()
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
@@ -210,12 +210,12 @@ Web Services Response Parameter (consume)
 ### 4.2 Charge Processing & Billing Linkage
 
 Webservice Mechanism Service Exposure: Charge Processing & Billing Linkage
-Protocol: RESTFUL
-Function Description: 1. Validates and processes a payment charge request through the payment processor 2. Emits payment and billing data plus webhook event name for downstream systems
-Source Module: Payment & Billing Module
-Target Module: Administration & Moderation, User Management & Authentication, External Billing Dashboards
-URL: http://localhost/HireMe/public/api/payment-billing/charge
-Function Name: charge()
+##### Protocol: RESTFUL
+##### Function Description: 1. Validates and processes a payment charge request through the payment processor 2. Emits payment and billing data plus webhook event name for downstream systems
+##### Source Module: Payment & Billing Module
+##### Target Module: Administration & Moderation, User Management & Authentication, External Billing Dashboards
+##### URL: http://localhost/HireMe/public/api/payment-billing/charge
+##### Function Name: charge()
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
@@ -245,12 +245,12 @@ Web Services Response Parameter (consume)
 ### 5.1 Job Approval Command Dispatch
 
 Webservice Mechanism Service Exposure: Job Approval Command Dispatch
-Protocol: RESTFUL
-Function Description: 1. Validates moderator authority and approves a pending job 2. Dispatches moderation events through the arbiter for audit trails
-Source Module: Administration & Moderation Module
-Target Module: Job Posting & Application, User Management & Authentication
-URL: http://localhost/HireMe/public/api/admin-moderation/approve-job/{jobId}
-Function Name: makeApproveJobCommand() via handle('approve-job')
+##### Protocol: RESTFUL
+##### Function Description: 1. Validates moderator authority and approves a pending job 2. Dispatches moderation events through the arbiter for audit trails
+##### Source Module: Administration & Moderation Module
+##### Target Module: Job Posting & Application, User Management & Authentication
+##### URL: http://localhost/HireMe/public/api/admin-moderation/approve-job/{jobId}
+##### Function Name: makeApproveJobCommand() via handle('approve-job')
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
@@ -270,12 +270,12 @@ Web Services Response Parameter (consume)
 ### 5.2 User Suspension Lifecycle Management
 
 Webservice Mechanism Service Exposure: User Suspension Lifecycle Management
-Protocol: RESTFUL
-Function Description: 1. Suspends a user with optional expiry and moderation reason 2. Logs guardian audits and emits moderation events for enforcement
-Source Module: Administration & Moderation Module
-Target Module: User Management & Authentication, Resume & Profile Management, Payment & Billing
-URL: http://localhost/HireMe/public/api/admin-moderation/suspend-user
-Function Name: makeSuspendUserCommand() via handle('suspend-user')
+##### Protocol: RESTFUL
+##### Function Description: 1. Suspends a user with optional expiry and moderation reason 2. Logs guardian audits and emits moderation events for enforcement
+##### Source Module: Administration & Moderation Module
+##### Target Module: User Management & Authentication, Resume & Profile Management, Payment & Billing
+##### URL: http://localhost/HireMe/public/api/admin-moderation/suspend-user
+##### Function Name: makeSuspendUserCommand() via handle('suspend-user')
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
@@ -296,13 +296,5 @@ Web Services Response Parameter (consume)
 | result.payload.user_id | integer | optional | Identifier of the suspended account. | 35 |
 | result.payload.until | string | optional | Suspension expiry timestamp when provided. | 2024-06-30T23:59:59+00:00 |
 
----
 
-## 6. Local Testing Notes
-
-1. Install dependencies: `composer install`
-2. Run the Laravel built-in server: `php -S 0.0.0.0:8000 -t public`
-3. Exercise endpoints with cURL or Postman using the URLs above and JSON payloads.
-
-All services return JSON responses and rely on guardian assertions defined in `AbstractModuleService` to enforce permissions.
 
