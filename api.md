@@ -14,7 +14,7 @@ Protocol: RESTFUL
 Function Description: 1. Validates candidate/employer/recruiter/admin credentials across role models 2. Issues a sanitized user payload and role context when authentication succeeds
 Source Module: User Management & Authentication Module
 Target Module: Resume & Profile Management, Job Posting & Application, Payment & Billing, Administration & Moderation
-URL: http://localhost:8000/public/api/user-management/authenticate
+URL: http://localhost/HireMe/public/api/user-management/authenticate
 Function Name: authenticateUser()
 
 Web Services Request Parameter (provide)
@@ -40,7 +40,7 @@ Protocol: RESTFUL
 Function Description: 1. Retrieves a specific user record and optional role-scoped view 2. Enriches the response with resume, application, job, payment, or billing data through module forwarding
 Source Module: User Management & Authentication Module
 Target Module: Resume & Profile Management, Job Posting & Application, Payment & Billing
-URL: http://localhost:8000/public/api/user-management/user/{userId}
+URL: http://localhost/HireMe/public/api/user-management/user/{userId}
 Function Name: showUser()
 
 Web Services Request Parameter (provide)
@@ -76,7 +76,7 @@ Protocol: RESTFUL
 Function Description: 1. Lists resumes optionally filtered by candidate scope 2. Embeds candidate information for downstream enrichment
 Source Module: Resume & Profile Management Module
 Target Module: User Management & Authentication, Job Posting & Application, Administration & Moderation
-URL: http://localhost:8000/public/api/resume-profile/resumes/{candidateId?}
+URL: http://localhost/HireMe/public/api/resume-profile/resumes/{candidateId?}
 Function Name: listResumes()
 
 Web Services Request Parameter (provide)
@@ -100,7 +100,7 @@ Protocol: RESTFUL
 Function Description: 1. Aggregates candidate profile data with latest resume rendering 2. Forwards to User Management to attach the owning user account snapshot
 Source Module: Resume & Profile Management Module
 Target Module: User Management & Authentication, Job Posting & Application
-URL: http://localhost:8000/public/api/resume-profile/profile/{candidateId}
+URL: http://localhost/HireMe/public/api/resume-profile/profile/{candidateId}
 Function Name: showProfile()
 
 Web Services Request Parameter (provide)
@@ -135,7 +135,7 @@ Protocol: RESTFUL
 Function Description: 1. Provides job listings filtered by status, employer, recruiter, or scope 2. Supports admin guardian auditing for job directory access
 Source Module: Job Posting & Application Module
 Target Module: Administration & Moderation, User Management & Authentication, Resume & Profile Management
-URL: http://localhost:8000/public/api/job-application/jobs/{scope?}
+URL: http://localhost/HireMe/public/api/job-application/jobs/{scope?}
 Function Name: listJobs()
 
 Web Services Request Parameter (provide)
@@ -161,7 +161,7 @@ Protocol: RESTFUL
 Function Description: 1. Retrieves a specific job application record 2. Invokes Resume/Profile service to attach candidate dossier data
 Source Module: Job Posting & Application Module
 Target Module: Resume & Profile Management, Administration & Moderation
-URL: http://localhost:8000/public/api/job-application/application/{applicationId}
+URL: http://localhost/HireMe/public/api/job-application/application/{applicationId}
 Function Name: showApplication()
 
 Web Services Request Parameter (provide)
@@ -188,7 +188,7 @@ Protocol: RESTFUL
 Function Description: 1. Returns payments filtered by status, user type, or scoped identifier 2. Provides counts and filter echoes for financial reconciliations
 Source Module: Payment & Billing Module
 Target Module: Administration & Moderation, User Management & Authentication
-URL: http://localhost:8000/public/api/payment-billing/payments/{scope?}
+URL: http://localhost/HireMe/public/api/payment-billing/payments/{scope?}
 Function Name: listPayments()
 
 Web Services Request Parameter (provide)
@@ -214,7 +214,7 @@ Protocol: RESTFUL
 Function Description: 1. Validates and processes a payment charge request through the payment processor 2. Emits payment and billing data plus webhook event name for downstream systems
 Source Module: Payment & Billing Module
 Target Module: Administration & Moderation, User Management & Authentication, External Billing Dashboards
-URL: http://localhost:8000/public/api/payment-billing/charge
+URL: http://localhost/HireMe/public/api/payment-billing/charge
 Function Name: charge()
 
 Web Services Request Parameter (provide)
@@ -249,7 +249,7 @@ Protocol: RESTFUL
 Function Description: 1. Validates moderator authority and approves a pending job 2. Dispatches moderation events through the arbiter for audit trails
 Source Module: Administration & Moderation Module
 Target Module: Job Posting & Application, User Management & Authentication
-URL: http://localhost:8000/public/api/admin-moderation/approve-job/{jobId}
+URL: http://localhost/HireMe/public/api/admin-moderation/approve-job/{jobId}
 Function Name: makeApproveJobCommand() via handle('approve-job')
 
 Web Services Request Parameter (provide)
@@ -274,7 +274,7 @@ Protocol: RESTFUL
 Function Description: 1. Suspends a user with optional expiry and moderation reason 2. Logs guardian audits and emits moderation events for enforcement
 Source Module: Administration & Moderation Module
 Target Module: User Management & Authentication, Resume & Profile Management, Payment & Billing
-URL: http://localhost:8000/public/api/admin-moderation/suspend-user
+URL: http://localhost/HireMe/public/api/admin-moderation/suspend-user
 Function Name: makeSuspendUserCommand() via handle('suspend-user')
 
 Web Services Request Parameter (provide)
