@@ -8,7 +8,7 @@ HireMe organises core capabilities—users, resumes, jobs, payments, and adminis
 
 ### Design Pattern
 
-The authentication surface supports multiple user roles (candidate, employer, recruiter) that all share login, registration, and password reset flows but persist their data in role‑specific tables. The module therefore uses the **Strategy** pattern: the `AuthController` chooses a `UserProviderInterface` implementation at runtime, delegating user discovery, metadata loading, registration, and password maintenance to role‑specific strategies while keeping the high‑level workflow unchanged. Each concrete provider encapsulates the SQL tailored to its table while honouring the shared interface. 【F\:app/Controllers/AuthController.php†L82-L379】【F\:app/Controllers/Auth/UserProviderInterface.php†L8-L24】【F\:app/Controllers/Auth/Providers/CandidateProvider.php†L9-L55】
+The authentication surface supports multiple user roles—candidate, employer, recruiter, and administrator—that reuse the same login and password reset flows while persisting their data in role‑specific tables. Candidate, employer, and recruiter accounts also share the registration surface, whereas administrators authenticate through the shared workflow but remain a login‑only persona. The module therefore uses the **Strategy** pattern: the `AuthController` chooses a `UserProviderInterface` implementation at runtime, delegating user discovery, metadata loading, registration, and password maintenance to role‑specific strategies while keeping the high‑level workflow unchanged. Each concrete provider encapsulates the SQL tailored to its table while honouring the shared interface. 【F\:app/Controllers/AuthController.php†L82-L379】【F\:app/Controllers/Auth/UserProviderInterface.php†L8-L24】【F\:app/Controllers/Auth/Providers/CandidateProvider.php†L9-L55】
 
 ### Implementation & Coding
 
@@ -17,10 +17,10 @@ The authentication surface supports multiple user roles (candidate, employer, re
 |  AuthController      |   --------------------->   |      UserProviderInterface   |
 +----------------------+        depends on          +------------------------------+
 |  doLogin()           |                             |             |             |
-|  doRegister()        |                             v             v             v
-|  processReset()      |               +-----------------+ +----------------+ +-----------------+
-+----------------------+               |CandidateProvider| |EmployerProvider| |RecruiterProvider|
-            |                          +-----------------+ +----------------+ +-----------------+
+|  doRegister()        |                             v             v             v             v
+|  processReset()      |               +-----------------+ +----------------+ +-----------------+ +---------------+
++----------------------+               |CandidateProvider| |EmployerProvider| |RecruiterProvider| |AdminProvider  |
+            |                          +-----------------+ +----------------+ +-----------------+ +---------------+
             | uses
             v
 +---------------------------+
@@ -54,13 +54,13 @@ $user = $found['user'];
 $meta = $provider->fetchMeta($pdo, (int)$user['id']);
 ```
 
-* `AuthController::doLogin()` and `doRegister()` invoke `UserProviderFactory::findByEmail()`/`providerForRole()` to obtain the correct strategy before fetching metadata or creating a record. 【F\:app/Controllers/AuthController.php†L112-L244】【F\:app/Controllers/Auth/UserProviderFactory.php†L11-L50】
-* The `UserProviderInterface` defines the algorithm family (lookup, metadata, create, password update), and each provider supplies its SQL, keeping role peculiarities isolated. 【F\:app/Controllers/Auth/UserProviderInterface.php†L8-L24】【F\:app/Controllers/Auth/Providers/CandidateProvider.php†L9-L55】
+* `AuthController::doLogin()` and `doRegister()` invoke `UserProviderFactory::findByEmail()`/`providerForRole()` to obtain the correct strategy before fetching metadata or creating a record. Administrator logins pass through the same flow via the newly added provider. 【F\:app/Controllers/AuthController.php†L112-L244】【F\:app/Controllers/Auth/UserProviderFactory.php†L11-L50】【F\:app/Controllers/Auth/Providers/AdminProvider.php†L11-L58】
+* The `UserProviderInterface` defines the algorithm family (lookup, metadata, create, password update), and each provider supplies its SQL, keeping role peculiarities isolated. Administrator authentication reuses the interface but skips registration by design (`AuthController::ROLES` exposes only candidate/employer/recruiter for signup). 【F\:app/Controllers/Auth/UserProviderInterface.php†L8-L24】【F\:app/Controllers/Auth/Providers/CandidateProvider.php†L9-L55】【F\:app/Controllers/AuthController.php†L19-L214】
 * Module‑facing APIs such as `UserManagementService::handle('authenticate')` still expose a unified contract, returning role metadata that can be enriched through `ModuleRegistry` for dashboards and profile lookups. 【F\:app/Services/Modules/UserManagementService.php†L15-L298】
 
 ### Justification
 
-Strategy cleanly separates per‑role persistence rules from shared authentication workflows. Adding a new persona now requires only a new provider class registered with the factory, leaving controller logic untouched and avoiding cascades of conditionals across login, registration, and reset flows. 【F\:app/Controllers/Auth/UserProviderFactory.php†L11-L50】【F\:app/Controllers/AuthController.php†L112-L372】 Security checks—rate limiting, password hashing, metadata projection—stay centralised in the controller, while providers focus on storage concerns for easier testing and maintenance. 【F\:app/Controllers/AuthController.php†L102-L379】【F\:app/Controllers/Auth/Providers/CandidateProvider.php†L13-L55】
+Strategy cleanly separates per‑role persistence rules from shared authentication workflows. Adding a new persona now requires only a new provider class registered with the factory, leaving controller logic untouched and avoiding cascades of conditionals across login, registration, and reset flows—the recently introduced `AdminProvider` is a direct example. 【F\:app/Controllers/Auth/UserProviderFactory.php†L11-L50】【F\:app/Controllers/Auth/Providers/AdminProvider.php†L11-L58】【F\:app/Controllers/AuthController.php†L112-L372】 Security checks—rate limiting, password hashing, metadata projection—stay centralised in the controller, while providers focus on storage concerns for easier testing and maintenance. 【F\:app/Controllers/AuthController.php†L102-L379】【F\:app/Controllers/Auth/Providers/CandidateProvider.php†L13-L55】
 
 ---
 
