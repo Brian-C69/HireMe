@@ -128,12 +128,48 @@ final class Container
         $arguments = [];
         foreach ($constructor->getParameters() as $parameter) {
             $type = $parameter->getType();
-            if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-                $arguments[] = $this->make($type->getName());
-                continue;
-            }
 
-            if ($parameter->isDefaultValueAvailable()) {
+            if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+                $name = $type->getName();
+
+                if ($this->has($name)) {
+                    $arguments[] = $this->make($name);
+                    continue;
+                }
+
+                if (class_exists($name)) {
+                    $arguments[] = $this->make($name);
+                    continue;
+                }
+
+                if (interface_exists($name)) {
+                    if ($parameter->isDefaultValueAvailable()) {
+                        $arguments[] = $parameter->getDefaultValue();
+                        continue;
+                    }
+
+                    if ($type->allowsNull()) {
+                        $arguments[] = null;
+                        continue;
+                    }
+
+                    throw new RuntimeException(sprintf(
+                        'Unable to resolve interface "%s" for "%s".',
+                        $name,
+                        $id
+                    ));
+                }
+
+                if ($parameter->isDefaultValueAvailable()) {
+                    $arguments[] = $parameter->getDefaultValue();
+                    continue;
+                }
+
+                if ($type->allowsNull()) {
+                    $arguments[] = null;
+                    continue;
+                }
+            } elseif ($parameter->isDefaultValueAvailable()) {
                 $arguments[] = $parameter->getDefaultValue();
                 continue;
             }
