@@ -717,7 +717,16 @@ Web Services Request Parameter (provide)
 | user_id | integer | mandatory | Identifier of the account being suspended. | 35 |
 | until | string | optional | ISO-8601 timestamp specifying suspension expiry. | 2024-06-30T23:59:59Z |
 | reason | string | optional | Moderator-provided suspension note. | Fraudulent activity |
+| X-Admin-Moderation | header string | mandatory* | Privilege gate for moderation commands; value must normalize to `allow`, `true`, `yes`, `1`, or `allowed`. Provide this or the alternative `X-Admin-Token`. | allow |
 | X-Admin-Id | header string | optional | Acting moderator identifier for audit trails. | 12 |
+
+*At least one privilege header (`X-Admin-Moderation` or `X-Admin-Token`) must accompany the request. The gateway registers this route with `$router->any(...)`, so you may call it via GET with query parameters or POST/PUT with a JSON body—just remember to include the authorization header alongside the required `role` and `user_id` fields.*
+
+```bash
+curl "http://localhost/HireMe/public/api/admin-moderation/suspend-user?user_id=35&role=employer" \
+  -H "X-Admin-Moderation: allow" \
+  -H "X-Admin-Id: 12"
+```
 
 Web Services Response Parameter (consume)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
