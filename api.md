@@ -10,12 +10,12 @@ All modules are exposed through the Laravel gateway at `http://localhost:8000/pu
 ### 1.1 Login Verification & Session Context
 
 Webservice Mechanism Service Exposure: Login Verification & Session Context
-#### Protocol: RESTFUL
-#### Function Description: 1. Validates candidate/employer/recruiter/admin credentials across role models 2. Issues a sanitized user payload and role context when authentication succeeds
-#### Source Module: User Management & Authentication Module
-#### Target Module: Resume & Profile Management, Job Posting & Application, Payment & Billing, Administration & Moderation
-#### URL: http://localhost/HireMe/public/api/user-management/authenticate
-#### Function Name: authenticateUser()
+##### Protocol: RESTFUL
+##### Function Description: 1. Validates candidate/employer/recruiter/admin credentials across role models 2. Issues a sanitized user payload and role context when authentication succeeds
+##### Source Module: User Management & Authentication Module
+##### Target Module: Resume & Profile Management, Job Posting & Application, Payment & Billing, Administration & Moderation
+##### URL: http://localhost/HireMe/public/api/user-management/authenticate
+##### Function Name: authenticateUser()
 
 Web Services Request Parameter (provide)
 | Field Name | Field Type | Mandatory/ Optional | Description | Format |
