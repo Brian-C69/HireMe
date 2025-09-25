@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers\Auth;
 
+use App\Controllers\Auth\Providers\AdminProvider;
 use App\Controllers\Auth\Providers\CandidateProvider;
 use App\Controllers\Auth\Providers\EmployerProvider;
 use App\Controllers\Auth\Providers\RecruiterProvider;
@@ -16,6 +17,7 @@ final class UserProviderFactory
     public static function providers(): array
     {
         return [
+            new AdminProvider(),
             new CandidateProvider(),
             new EmployerProvider(),
             new RecruiterProvider(),
