@@ -165,5 +165,12 @@ $badge = fn($on, $yes = 'success', $no = 'secondary') => $on ? "badge text-bg-$y
                 </nav>
             <?php endif; ?>
         <?php endif; ?>
+
+        <?php if (isset($premiumCount)): ?>
+            <div class="mt-3">
+                <span class="fw-semibold">Total Premium Candidates:</span>
+                <span class="badge bg-warning text-dark"><?= $premiumCount ?></span>
+            </div>
+        <?php endif; ?>
     </div>
 </section>

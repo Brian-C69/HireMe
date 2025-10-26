@@ -8,6 +8,7 @@ use App\Core\Auth;
 use App\Core\DB;
 use App\Services\Notify;
 use PDO;
+
 final class AdminController
 {
     // Whitelist tables + primary keys (adjust to your schema)
@@ -326,6 +327,9 @@ final class AdminController
         $st = $pdo->prepare("SELECT COUNT(*) FROM candidates $wsql");
         $st->execute($bind);
         $total = (int)$st->fetchColumn();
+
+        $premiumSql = "SELECT COUNT(*) FROM candidates WHERE premium_badge = 1";
+        $premiumCount = (int)$pdo->query($premiumSql)->fetchColumn();
 
         $sql = "SELECT candidate_id, full_name, email, phone_number, country,
                    premium_badge, verified_status, created_at, updated_at
@@ -1056,7 +1060,6 @@ final class AdminController
         $err = [];
         if ($name === '') $err['full_name'] = 'Full name is required.';
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) $err['email'] = 'Valid email required.';
-        if (!$err && $this->emailExistsAny($pdo, $email)) $err['email'] = 'Email already in use.';
         if ($pass === '' || strlen($pass) < 6) $err['password'] = 'Password min 6 characters.';
 
         if ($err) {
@@ -1553,6 +1556,7 @@ final class AdminController
         if (count($chosen) !== 3) $err['mi_questions'] = 'Pick exactly 3 micro interview questions.';
 
         if ($err) {
+
             $this->setErrors($err);
             $this->setOld($_POST);
             $this->redirect('/admin/jobs/' . $id . '/edit');

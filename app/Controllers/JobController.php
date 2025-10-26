@@ -298,25 +298,26 @@ final class JobController
 
         $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
         $sql = "
-  SELECT jp.*,
-         e.company_name,
-         e.company_logo,
-         COALESCE(ac.cnt, 0) AS applicants_count
-  FROM job_postings jp
-  JOIN employers e ON e.employer_id = jp.company_id
-  LEFT JOIN (
-      SELECT job_posting_id, COUNT(*) AS cnt
-      FROM applications
-      WHERE application_status <> 'Withdrawn'
-      GROUP BY job_posting_id
-  ) ac ON ac.job_posting_id = jp.job_posting_id
-  $whereSql
-  ORDER BY jp.date_posted DESC, jp.job_posting_id DESC
-  LIMIT 200";
+SELECT jp.*,
+       e.company_name,
+       e.company_logo,
+       COALESCE(ac.cnt, 0) AS applicants_count
+FROM job_postings jp
+JOIN employers e ON e.employer_id = jp.company_id
+LEFT JOIN (
+    SELECT job_posting_id, COUNT(*) AS cnt
+    FROM applications
+    WHERE application_status <> 'Withdrawn'
+    GROUP BY job_posting_id
+) ac ON ac.job_posting_id = jp.job_posting_id
+$whereSql
+ORDER BY jp.date_posted DESC, jp.job_posting_id DESC
+LIMIT 200";
         $st = $pdo->prepare($sql);
         $st->execute($bind);
         $jobs = $st->fetchAll() ?: [];
 
+        $jobTitleCounts = $this->countMyJobTitles();
         if (empty($_SESSION['csrf'])) {
             $_SESSION['csrf'] = bin2hex(random_bytes(16));
         }
@@ -674,5 +675,31 @@ final class JobController
         $title    = 'Applicants — ' . ($job['job_title'] ?? 'Job');
         $viewFile = $root . '/app/Views/jobs/applicants.php';
         require $root . '/app/Views/layout.php';
+    }
+
+    public function countMyJobTitles(): array
+    {
+        \App\Core\Auth::requireRole(['Employer', 'Recruiter']);
+        $pdo  = DB::conn();
+        $uid  = (int)($_SESSION['user']['id'] ?? 0);
+        $role = $_SESSION['user']['role'] ?? '';
+
+        // Get only jobs posted by the current user
+        if ($role === 'Employer') {
+            $st = $pdo->prepare("SELECT job_title FROM job_postings WHERE company_id = :uid AND status <> 'Deleted'");
+        } else {
+            $st = $pdo->prepare("SELECT job_title FROM job_postings WHERE recruiter_id = :uid AND status <> 'Deleted'");
+        }
+        $st->execute([':uid' => $uid]);
+        $titles = $st->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+        $counts = [];
+        foreach ($titles as $title) {
+            $name = trim($title);
+            if ($name === '') continue;
+            $counts[$name] = ($counts[$name] ?? 0) + 1;
+        }
+
+        return $counts;
     }
 }

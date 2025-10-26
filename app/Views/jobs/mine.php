@@ -154,5 +154,19 @@ $csrf = htmlspecialchars($_SESSION['csrf'] ?? '');
                 })();
             </script>
         <?php endif; ?>
+
+        <?php if (isset($jobTitleCounts) && $jobTitleCounts) : ?>
+            <div class="mt-4">
+                <h5>Job Title Counts</h5>
+                <ul>
+                    <?php foreach ($jobTitleCounts as $title => $count): ?>
+                        <li style="list-style: none;">
+                            <?= htmlspecialchars($title) ?>
+                            <span class="badge bg-primary rounded-pill"><?= $count ?></span>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+        <?php endif; ?>
     </div>
 </section>
